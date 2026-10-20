@@ -62,7 +62,11 @@ authRoutes.post('/logout', async (c) => {
   return c.json({ ok: true });
 });
 
-authRoutes.get('/me', requireAuth, async (c) => c.json({ user: publicUser(c.get('user')) }));
+authRoutes.get('/me', async (c) => {
+  const { optionalUser } = await import('../lib/auth.js');
+  const u = await optionalUser(c);
+  return c.json({ user: u ? publicUser(u) : null });
+});
 
 authRoutes.patch('/me', requireAuth, async (c) => {
   const b = await body(

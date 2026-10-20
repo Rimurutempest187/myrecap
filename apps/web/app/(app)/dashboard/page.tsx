@@ -107,7 +107,7 @@ export default function Dashboard() {
                   ) : (
                     <div className="w-full h-full flex items-center justify-center muted"><Film className="w-10 h-10" /></div>
                   )}
-                  <div className="absolute top-2 left-2"><StatusBadge status={p.status} /></div>
+                  <div className="absolute top-2 left-2 rounded-full bg-black/70 backdrop-blur"><StatusBadge status={p.status} /></div>
                 </div>
                 <div className="p-4">
                   <p className="font-semibold truncate my-text">{p.title}</p>

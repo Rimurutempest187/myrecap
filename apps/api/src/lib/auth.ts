@@ -72,6 +72,11 @@ async function loadUser(c: Context) {
   return session;
 }
 
+export async function optionalUser(c: Context) {
+  const s = await loadUser(c);
+  return s?.user ?? null;
+}
+
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   const s = await loadUser(c);
   if (!s) throw unauthorized();
