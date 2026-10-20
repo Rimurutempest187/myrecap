@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
-import { AppError, env, logger, prisma, redis } from '@recap/core';
+import { AppError, env, logger, prisma, redis, reportError } from '@recap/core';
 import { csrfGuard } from './lib/auth.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
@@ -74,7 +74,7 @@ export function createApp() {
     if (anyErr?.code === 'P2025') return c.json({ error: { code: 'NOT_FOUND', message: 'Record not found' } }, 404);
     if (anyErr?.code === 'P2002') return c.json({ error: { code: 'CONFLICT', message: 'Duplicate record' } }, 409);
     if (anyErr?.code === 'P2034') return c.json({ error: { code: 'CONFLICT', message: 'Concurrent update, please retry' } }, 409);
-    logger.error({ err, reqId: c.get('requestId'), path: c.req.path }, 'unhandled error');
+    void reportError(err, { reqId: c.get('requestId'), path: c.req.path, method: c.req.method });
     return c.json({ error: { code: 'INTERNAL', message: 'Something went wrong. Please try again.', requestId: c.get('requestId') } }, 500);
   });
 

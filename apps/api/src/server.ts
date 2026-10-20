@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server';
-import { env, logger, productionConfigProblems, prisma } from '@recap/core';
+import { env, logger, productionConfigProblems, prisma, reportError } from '@recap/core';
 import { createApp } from './app.js';
 
 process.env.SERVICE_NAME ||= 'api';
@@ -23,4 +23,4 @@ const shutdown = async (sig: string) => {
 };
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('unhandledRejection', (e) => logger.error({ err: e }, 'unhandledRejection'));
+process.on('unhandledRejection', (e) => void reportError(e, { kind: 'unhandledRejection' }));

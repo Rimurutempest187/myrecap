@@ -1,0 +1,90 @@
+# RecapAI — production stack (single host). See README "Deployment".
+#   cp .env.example .env   # fill in secrets
+#   docker compose up -d --build
+#   docker compose up -d --scale worker=3   # more render capacity
+name: recapai
+
+x-app-env: &app-env
+  env_file: .env
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgresql://${POSTGRES_USER:-recap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-recap}?schema=public
+    REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-recap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-recap}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-recap}"]
+      interval: 10s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AOF persistence so queued jobs survive restarts; noeviction is required by BullMQ
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      retries: 10
+
+  api:
+    <<: *app-env
+    build: { context: ., dockerfile: docker/Dockerfile, target: api }
+    image: recapai-api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    expose: ["4000"]
+
+  worker:
+    <<: *app-env
+    build: { context: ., dockerfile: docker/Dockerfile, target: worker }
+    image: recapai-worker
+    depends_on:
+      api: { condition: service_healthy }   # migrations run in the API entrypoint
+    volumes: [workdir:/work]
+    stop_grace_period: 120s   # let in-flight renders finish / requeue cleanly
+    deploy:
+      resources:
+        limits: { cpus: "${WORKER_CPUS:-2}", memory: "${WORKER_MEMORY:-3g}" }
+
+  web:
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    image: recapai-web
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on: [api]
+    expose: ["3000"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web, api]
+
+volumes:
+  pgdata:
+  redisdata:
+  workdir:
+  caddy_data:
+  caddy_config:

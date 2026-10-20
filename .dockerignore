@@ -1,0 +1,12 @@
+**/node_modules
+**/.next
+**/dist
+.git
+.env
+.env.*
+!.env.example
+storage
+tmp
+*.log
+*.mp4
+coverage

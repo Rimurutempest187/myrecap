@@ -14,6 +14,7 @@ import {
   publishJobEvent,
   PermanentJobError,
   JobCancelledError,
+  reportError,
   type JobPayload,
 } from '@recap/core';
 import { createServer } from 'node:http';
@@ -81,6 +82,7 @@ async function handle(bj: BullJob<JobPayload>) {
     const permanent = reason instanceof PermanentJobError;
     const lastAttempt = bj.attemptsMade + 1 >= (bj.opts.attempts ?? 1);
     logger.error({ jobId: job.id, type: job.type, err: reason?.message, stderr: reason?.stderr?.slice?.(-1500), permanent, attempt: bj.attemptsMade + 1 }, 'job failed');
+    if (!permanent) void reportError(reason, { jobId: job.id, type: job.type, attempt: bj.attemptsMade + 1 });
     if (permanent || lastAttempt) {
       await finalizeFailed(job.id, friendlyError(reason));
       throw new UnrecoverableError(friendlyError(reason));
@@ -149,4 +151,4 @@ async function shutdown(sig: string) {
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('unhandledRejection', (err) => logger.error({ err }, 'unhandledRejection'));
+process.on('unhandledRejection', (err) => void reportError(err, { kind: 'unhandledRejection' }));

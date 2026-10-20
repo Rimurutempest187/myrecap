@@ -1,0 +1,14 @@
+# Local development infrastructure only (Postgres + Redis). Run the apps with npm / PM2.
+#   docker compose -f docker-compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment: { POSTGRES_USER: recap, POSTGRES_PASSWORD: recap_dev_pw, POSTGRES_DB: recap }
+    ports: ["5432:5432"]
+    volumes: [devpg:/var/lib/postgresql/data]
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["6379:6379"]
+volumes:
+  devpg:

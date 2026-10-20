@@ -1,0 +1,44 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: recap, POSTGRES_PASSWORD: recap, POSTGRES_DB: recap }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U recap" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql://recap:recap@localhost:5432/recap?schema=public
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-secret-ci-secret-ci-secret-ci-secret
+      STORAGE_DRIVER: local
+      LOCAL_STORAGE_DIR: /tmp/recap-storage
+      TTS_PROVIDER: espeak
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core espeak-ng
+      - run: npm ci
+      - run: npm run build:backend
+      - run: npm run db:deploy
+      - run: node packages/core/dist/seed.js
+      - run: npm test
+      - run: npm run build -w @recap/web
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: |
+          for t in api worker web; do
+            docker buildx build -f docker/Dockerfile --target $t -t recapai-$t:ci --load .
+          done
