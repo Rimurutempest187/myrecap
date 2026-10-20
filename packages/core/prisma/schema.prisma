@@ -1,0 +1,423 @@
+// RecapAI database schema
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum RecapType {
+  ANIME
+  MOVIE
+  SHORTS
+  HIGHLIGHTS
+  CUSTOM
+}
+
+enum AspectRatio {
+  R9_16
+  R16_9
+  R1_1
+}
+
+enum ProjectStatus {
+  DRAFT
+  UPLOADED
+  ANALYZING
+  SCRIPT_READY
+  VOICING
+  VOICED
+  RENDERING
+  COMPLETED
+  FAILED
+}
+
+enum AssetKind {
+  SOURCE_VIDEO
+  VOICEOVER
+  RENDER
+  THUMBNAIL
+  MUSIC
+}
+
+enum AssetStatus {
+  PENDING_UPLOAD
+  UPLOADED
+  READY
+  REJECTED
+  DELETED
+}
+
+enum JobType {
+  PROBE
+  ANALYZE
+  VOICEOVER
+  RENDER
+}
+
+enum JobStatus {
+  QUEUED
+  ACTIVE
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum LedgerReason {
+  SIGNUP_BONUS
+  PLAN_GRANT
+  PURCHASE
+  JOB_RESERVE
+  JOB_RELEASE
+  ADMIN_ADJUST
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  ACTIONED
+  REJECTED
+}
+
+model User {
+  id                 String     @id @default(cuid())
+  email              String     @unique
+  passwordHash       String
+  name               String
+  role               Role       @default(USER)
+  status             UserStatus @default(ACTIVE)
+  creditBalance      Int        @default(0)
+  // Optional user-defined cap on credits spent per calendar month (null = plan default / unlimited)
+  monthlyCreditLimit Int?
+  planId             String?
+  plan               Plan?      @relation(fields: [planId], references: [id])
+  stripeCustomerId   String?    @unique
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  lastLoginAt        DateTime?
+
+  sessions      Session[]
+  projects      Project[]
+  assets        Asset[]
+  jobs          Job[]
+  ledger        CreditLedger[]
+  usage         UsageEvent[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  auditLogs     AuditLog[]     @relation("actor")
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Plan {
+  id                 String   @id @default(cuid())
+  code               String   @unique
+  name               String
+  priceCents         Int      @default(0)
+  currency           String   @default("usd")
+  monthlyCredits     Int      @default(0)
+  maxUploadMb        Int      @default(500)
+  maxVideoMinutes    Int      @default(30)
+  maxConcurrentJobs  Int      @default(1)
+  maxOutputHeight    Int      @default(1080)
+  watermark          Boolean  @default(false)
+  stripePriceId      String?
+  active             Boolean  @default(true)
+  sortOrder          Int      @default(0)
+  features           Json     @default("[]")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  users         User[]
+  subscriptions Subscription[]
+}
+
+model CreditPack {
+  id            String   @id @default(cuid())
+  name          String
+  credits       Int
+  priceCents    Int
+  currency      String   @default("usd")
+  stripePriceId String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId               String
+  plan                 Plan               @relation(fields: [planId], references: [id])
+  status               SubscriptionStatus
+  provider             String             @default("stripe")
+  providerSubId        String             @unique
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([userId])
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String        @default("stripe")
+  providerRef String        @unique
+  kind        String // SUBSCRIPTION | TOPUP
+  amountCents Int
+  currency    String
+  credits     Int           @default(0)
+  status      PaymentStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+
+  @@index([userId])
+}
+
+model CreditLedger {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  delta          Int
+  balanceAfter   Int
+  reason         LedgerReason
+  jobId          String?
+  idempotencyKey String       @unique
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  @@index([userId, createdAt])
+  @@index([jobId])
+}
+
+model Asset {
+  id          String      @id @default(cuid())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind        AssetKind
+  status      AssetStatus @default(PENDING_UPLOAD)
+  storageKey  String      @unique
+  filename    String?
+  mimeType    String
+  sizeBytes   BigInt      @default(0)
+  durationSec Float?
+  width       Int?
+  height      Int?
+  hasAudio    Boolean?
+  meta        Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([userId, kind])
+  @@index([status, createdAt])
+}
+
+model Project {
+  id                  String        @id @default(cuid())
+  userId              String
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title               String
+  recapType           RecapType
+  aspectRatio         AspectRatio   @default(R9_16)
+  fitMode             String        @default("blur") // blur | crop
+  customPrompt        String?
+  targetDurationSec   Int           @default(60)
+  status              ProjectStatus @default(DRAFT)
+  sourceAssetId       String?
+  outputAssetId       String?
+  thumbnailAssetId    String?
+  // Voice settings
+  voiceName           String        @default("my-MM-NilarNeural")
+  voiceRate           Float         @default(1.0)
+  voicePitch          Int           @default(0)
+  // Audio mixing
+  originalAudioVolume Float         @default(0.12)
+  musicTrackId        String?
+  musicVolume         Float         @default(0.15)
+  transition          String        @default("fade") // none | fade | slideleft | wipeleft | dissolve | circleopen
+  subtitleStyle       Json?
+  subtitlesEnabled    Boolean       @default(true)
+  analysis            Json?
+  copyrightConfirmedAt DateTime?
+  copyrightIp         String?
+  lastError           String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  deletedAt           DateTime?
+
+  segments  ScriptSegment[]
+  subtitles Subtitle[]
+  jobs      Job[]
+
+  @@index([userId, createdAt])
+  @@index([deletedAt])
+}
+
+model ScriptSegment {
+  id               String  @id @default(cuid())
+  projectId        String
+  project          Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  idx              Int
+  sourceStart      Float
+  sourceEnd        Float
+  narration        String
+  sceneNote        String?
+  audioKey         String?
+  audioDurationSec Float?
+  audioTextHash    String?
+
+  @@unique([projectId, idx])
+}
+
+model Subtitle {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  idx       Int
+  segmentIdx Int?
+  startSec  Float
+  endSec    Float
+  text      String
+
+  @@unique([projectId, idx])
+}
+
+model Job {
+  id              String    @id @default(cuid())
+  projectId       String?
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            JobType
+  status          JobStatus @default(QUEUED)
+  progress        Int       @default(0)
+  stage           String?
+  error           String?
+  attempts        Int       @default(0)
+  idempotencyKey  String    @unique
+  cancelRequested Boolean   @default(false)
+  creditsReserved Int       @default(0)
+  creditsCharged  Int       @default(0)
+  estCostUsd      Float     @default(0)
+  actualCostUsd   Float     @default(0)
+  input           Json?
+  result          Json?
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  usage UsageEvent[]
+
+  @@index([userId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([status])
+}
+
+model UsageEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId     String?
+  job       Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  kind      String // LLM_INPUT_TOKENS | LLM_OUTPUT_TOKENS | TTS_CHARS | RENDER_SECONDS | ANALYZE_SECONDS
+  quantity  Float
+  costUsd   Float    @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model MusicTrack {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String
+  license     String
+  licenseUrl  String?
+  storageKey  String   @unique
+  durationSec Float
+  mood        String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model TakedownReport {
+  id             String       @id @default(cuid())
+  reporterName   String
+  reporterEmail  String
+  rightsHolder   String
+  contentUrl     String?
+  projectId      String?
+  description    String
+  swornStatement Boolean
+  status         ReportStatus @default(OPEN)
+  resolutionNote String?
+  ip             String?
+  createdAt      DateTime     @default(now())
+  resolvedAt     DateTime?
+
+  @@index([status, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("actor", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String?
+  targetId   String?
+  meta       Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

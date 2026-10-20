@@ -1,20 +1,17 @@
 {
-  "name": "webapp",
-  "type": "module",
+  "name": "recapai",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "wrangler pages dev",
-    "deploy": "npm run build && wrangler pages deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "build": "npm run build -w @recap/core && npm run build -w @recap/api && npm run build -w @recap/worker && npm run build -w @recap/web",
+    "build:backend": "npm run build -w @recap/core && npm run build -w @recap/api && npm run build -w @recap/worker",
+    "db:generate": "npm run db:generate -w @recap/core",
+    "db:migrate": "npm run db:migrate -w @recap/core",
+    "db:deploy": "npm run db:deploy -w @recap/core",
+    "db:seed": "npm run db:seed -w @recap/core",
+    "test": "npm run test -w @recap/core && npm run test -w @recap/api && npm run test -w @recap/worker",
+    "typecheck": "npm run typecheck --workspaces --if-present"
   },
-  "dependencies": {
-    "hono": "^4.13.8"
-  },
-  "devDependencies": {
-    "@hono/vite-build": "^1.11.1",
-    "@hono/vite-dev-server": "^0.26.1",
-    "vite": "^8.1.4",
-    "wrangler": "^4.110.0"
-  }
+  "engines": { "node": ">=20" }
 }
