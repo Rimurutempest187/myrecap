@@ -1,0 +1,29 @@
+# Production edge: automatic HTTPS for {$DOMAIN}. /api/* streams straight to the API service
+# (large uploads in local-storage mode, SSE progress), everything else goes to Next.js.
+{$DOMAIN:localhost} {
+	encode zstd gzip
+	request_body {
+		max_size 2GB
+	}
+	@api path /api/* /metrics
+	handle @api {
+		reverse_proxy {$API_UPSTREAM:api:4000} {
+			flush_interval -1
+			transport http {
+				read_timeout 15m
+				write_timeout 15m
+			}
+		}
+	}
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	log {
+		output stdout
+		format json
+	}
+}

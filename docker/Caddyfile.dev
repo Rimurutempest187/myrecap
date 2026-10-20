@@ -1,0 +1,18 @@
+{
+	auto_https off
+	admin off
+}
+:3000 {
+	request_body {
+		max_size 2GB
+	}
+	@api path /api/* /metrics
+	handle @api {
+		reverse_proxy 127.0.0.1:4000 {
+			flush_interval -1
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
+}

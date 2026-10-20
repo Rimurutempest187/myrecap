@@ -10,6 +10,8 @@ export function fallbackStatus(type: string, hasScript: boolean, hasVoice: boole
 }
 
 async function projectFallback(projectId: string, type: string) {
+  const proj = await prisma.project.findUnique({ where: { id: projectId }, select: { outputAssetId: true } });
+  if (type === 'RENDER' && proj?.outputAssetId) return 'COMPLETED' as ProjectStatus;
   const [segs, voiced] = await Promise.all([
     prisma.scriptSegment.count({ where: { projectId } }),
     prisma.scriptSegment.count({ where: { projectId, audioKey: { not: null } } }),
