@@ -3,9 +3,10 @@ import {
   prisma,
   storage,
   env,
-  chat,
+  runChatTask,
+  modelsForTask,
+  transcribeWith,
   parseJsonLoose,
-  transcribe,
   detectScenesFull,
   extractFrame,
   extractSpeechAudio,
@@ -26,11 +27,21 @@ interface FrameDesc {
   interest?: number;
 }
 
-async function llm(ctx: JobContext, messages: ChatMessage[], opts: { model?: string; json?: boolean; maxTokens?: number } = {}) {
+const modelsUsed = new Map<string, { task: string; model: string; provider: string }>();
+
+/** Run a chat task through the admin-configured model route (with automatic failover between models). */
+async function llm(ctx: JobContext, task: 'vision' | 'script', messages: ChatMessage[], opts: { json?: boolean; maxTokens?: number; preferredModelId?: string | null } = {}) {
   try {
-    const r = await chat(messages, { ...opts, signal: ctx.signal });
-    await ctx.usage('LLM_INPUT_TOKENS', r.inputTokens, (r.inputTokens / 1e6) * env().LLM_INPUT_USD_PER_1M);
-    await ctx.usage('LLM_OUTPUT_TOKENS', r.outputTokens, (r.outputTokens / 1e6) * env().LLM_OUTPUT_USD_PER_1M);
+    const r = await runChatTask(task, messages, {
+      ...opts,
+      signal: ctx.signal,
+      onUsage: async (m, res) => {
+        await ctx.usage('LLM_INPUT_TOKENS', res.inputTokens, (res.inputTokens / 1e6) * m.inputUsdPer1M, m.id);
+        await ctx.usage('LLM_OUTPUT_TOKENS', res.outputTokens, (res.outputTokens / 1e6) * m.outputUsdPer1M, m.id);
+      },
+    });
+    modelsUsed.set(`${ctx.job.id}:${task}`, { task, model: r.run.model, provider: r.run.provider });
+    if (r.run.attempts.length) logger.warn({ jobId: ctx.job.id, task, failovers: r.run.attempts }, 'AI model failover used');
     return r.text;
   } catch (e) {
     if (e instanceof LlmError && !e.retryable) throw new PermanentJobError(e.message);
@@ -44,6 +55,7 @@ export async function processAnalyze(ctx: JobContext) {
   const asset = project.sourceAssetId ? await prisma.asset.findUnique({ where: { id: project.sourceAssetId } }) : null;
   if (!asset || asset.status !== 'READY' || !asset.durationSec) throw new PermanentJobError('Source video is not ready');
   const e = env();
+  for (const k of [...modelsUsed.keys()]) if (k.startsWith(`${ctx.job.id}:`)) modelsUsed.delete(k);
   const duration = asset.durationSec;
 
   await ctx.progress(2, 'Downloading video');
@@ -63,21 +75,30 @@ export async function processAnalyze(ctx: JobContext) {
 
   // 2) Optional speech-to-text of original dialogue (improves plot understanding)
   let transcript: Array<{ start: number; end: number; text: string }> | undefined;
-  if (asset.hasAudio && e.STT_API_KEY && e.STT_BASE_URL) {
+  const sttModels = asset.hasAudio ? await modelsForTask('stt') : [];
+  if (sttModels.length) {
     await ctx.progress(31, 'Transcribing dialogue');
+    const audio = ctx.file('speech.mp3');
+    const maxSec = Math.min(duration, 3600);
     try {
-      const audio = ctx.file('speech.mp3');
-      const maxSec = Math.min(duration, 3600);
       await extractSpeechAudio(src, audio, maxSec, { signal: ctx.signal, timeoutMs: 600_000 });
       const bytes = await readFile(audio);
       if (bytes.length < 24 * 1024 * 1024) {
-        const tr = await transcribe(audio, bytes, ctx.signal);
-        if (tr) {
-          transcript = tr.segments.filter((s) => s.text);
-          await ctx.usage('STT_MINUTES', maxSec / 60, (maxSec / 60) * e.STT_USD_PER_MIN);
+        for (const m of sttModels) {
+          try {
+            const tr = await transcribeWith(m, 'speech.mp3', bytes, ctx.signal);
+            transcript = tr.segments.filter((s) => s.text);
+            await ctx.usage('STT_MINUTES', maxSec / 60, (maxSec / 60) * m.unitUsdPer1M, m.id);
+            modelsUsed.set(`${ctx.job.id}:stt`, { task: 'stt', model: m.modelId, provider: m.provider.name });
+            break;
+          } catch (err) {
+            if (ctx.signal.aborted) throw err;
+            logger.warn({ err: (err as Error).message, model: m.modelId, jobId: ctx.job.id }, 'STT model failed, trying next');
+          }
         }
       }
     } catch (err) {
+      if (ctx.signal.aborted) throw err;
       logger.warn({ err, jobId: ctx.job.id }, 'transcription failed; continuing with visual analysis only');
     }
   }
@@ -107,7 +128,7 @@ export async function processAnalyze(ctx: JobContext) {
       content.push({ type: 'text', text: `Frame at t=${fr.t}s:` });
       content.push({ type: 'image_url', image_url: { url: fr.dataUrl, detail: 'low' } });
     }
-    const text = await llm(ctx, [{ role: 'system', content: FRAME_DESCRIBE_SYSTEM }, { role: 'user', content }], { model: e.VISION_MODEL || e.LLM_MODEL, json: true, maxTokens: 4000 });
+    const text = await llm(ctx, 'vision', [{ role: 'system', content: FRAME_DESCRIBE_SYSTEM }, { role: 'user', content }], { json: true, maxTokens: 4000 });
     let parsed: { frames?: FrameDesc[] } = {};
     try {
       parsed = parseJsonLoose(text);
@@ -143,7 +164,7 @@ export async function processAnalyze(ctx: JobContext) {
   for (let attempt = 0; attempt < 3 && segments.length === 0; attempt++) {
     const msgs: ChatMessage[] = [{ role: 'system', content: sys }, { role: 'user', content: user }];
     if (lastErr) msgs.push({ role: 'user', content: `Your previous answer was rejected: ${lastErr}. Return valid JSON with Myanmar narration only.` });
-    const text = await llm(ctx, msgs, { json: true, maxTokens: 12000 });
+    const text = await llm(ctx, 'script', msgs, { json: true, maxTokens: 12000, preferredModelId: project.analysisModelId });
     try {
       plan = parseJsonLoose(text);
       const segs = sanitizeSegments(plan?.segments, duration);
@@ -176,6 +197,7 @@ export async function processAnalyze(ctx: JobContext) {
           sceneCount: scenes.length,
           scenes: sceneInfos.slice(0, 400).map((s) => ({ start: s.start, end: s.end, desc: s.desc ?? null, interest: s.interest ?? null })),
           transcriptSegments: transcript?.length ?? 0,
+          models: [...modelsUsed.entries()].filter(([k]) => k.startsWith(`${ctx.job.id}:`)).map(([, v]) => v),
           framesAnalyzed: frames.length,
           analyzedAt: new Date().toISOString(),
         },

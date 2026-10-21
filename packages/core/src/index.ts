@@ -18,3 +18,6 @@ export * from './media/ffmpeg.js';
 export * from './media/render.js';
 export { hashPassword, DEFAULT_PLANS } from './seed.js';
 export * from './monitoring.js';
+export * from './secrets.js';
+export * from './ai/providers.js';
+export * from './ai/registry.js';

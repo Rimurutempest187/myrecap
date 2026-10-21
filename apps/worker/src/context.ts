@@ -78,9 +78,11 @@ export class JobContext {
     }).catch(() => undefined);
   }
 
-  async usage(kind: string, quantity: number, costUsd = 0) {
+  async usage(kind: string, quantity: number, costUsd = 0, modelId?: string) {
     this.costUsd += costUsd;
-    await prisma.usageEvent.create({ data: { userId: this.job.userId, jobId: this.job.id, kind, quantity, costUsd } });
+    await prisma.usageEvent.create({
+      data: { userId: this.job.userId, jobId: this.job.id, kind, quantity, costUsd, modelId: modelId && !modelId.startsWith('env:') ? modelId : null },
+    });
   }
 }
 

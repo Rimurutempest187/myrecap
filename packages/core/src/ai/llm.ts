@@ -120,3 +120,28 @@ export async function transcribe(
   }));
   return { segments, language: data.language };
 }
+
+/** Whisper-compatible transcription with a registry model. */
+export async function transcribeWith(
+  m: { modelId: string; provider: { baseUrl: string; apiKey: string | null; name: string } },
+  fileName: string,
+  fileBytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<{ segments: TranscriptSegment[]; language?: string }> {
+  const form = new FormData();
+  form.append('file', new Blob([fileBytes as unknown as BlobPart], { type: 'audio/mpeg' }), fileName);
+  form.append('model', m.modelId);
+  form.append('response_format', 'verbose_json');
+  const res = await fetch(`${m.provider.baseUrl.replace(/\/$/, '')}/audio/transcriptions`, {
+    method: 'POST',
+    headers: m.provider.apiKey ? { Authorization: `Bearer ${m.provider.apiKey}` } : {},
+    body: form,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
+  });
+  if (!res.ok) throw new LlmError(`${m.provider.name} STT HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`, res.status, res.status >= 500 || res.status === 429);
+  const data: any = await res.json();
+  return {
+    segments: (data.segments ?? []).map((s: any) => ({ start: Number(s.start), end: Number(s.end), text: String(s.text ?? '').trim() })),
+    language: data.language,
+  };
+}

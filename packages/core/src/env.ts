@@ -50,7 +50,7 @@ const schema = z.object({
   STT_USD_PER_MIN: z.coerce.number().default(0.006),
 
   // TTS
-  TTS_PROVIDER: z.enum(['azure', 'espeak']).default('azure'),
+  TTS_PROVIDER: z.enum(['azure', 'espeak', 'none']).default('none'),
   AZURE_SPEECH_KEY: z.string().optional(),
   AZURE_SPEECH_REGION: z.string().optional(),
   TTS_USD_PER_1M_CHARS: z.coerce.number().default(16),
@@ -116,12 +116,9 @@ export function productionConfigProblems(e: Env = env(), role: 'api' | 'worker' 
   if (e.STORAGE_DRIVER !== 'local' && (!e.S3_ACCESS_KEY_ID || !e.S3_SECRET_ACCESS_KEY || !e.S3_BUCKET))
     p.push('S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_BUCKET are required');
   if (e.STORAGE_DRIVER === 'r2' && !e.R2_ACCOUNT_ID && !e.S3_ENDPOINT) p.push('R2_ACCOUNT_ID (or S3_ENDPOINT) is required for r2');
-  if (role === 'worker') {
-    if (!e.LLM_API_KEY) p.push('LLM_API_KEY is required');
-    if (e.TTS_PROVIDER === 'azure' && (!e.AZURE_SPEECH_KEY || !e.AZURE_SPEECH_REGION))
-      p.push('AZURE_SPEECH_KEY and AZURE_SPEECH_REGION are required');
-    if (e.TTS_PROVIDER === 'espeak' && !e.ALLOW_DEV_TTS_IN_PRODUCTION)
-      p.push('TTS_PROVIDER=espeak is a development voice; set TTS_PROVIDER=azure in production');
-  }
+  // AI provider keys are managed in Admin → AI Models (encrypted in DB); env keys are optional bootstrap.
+  if (role === 'worker' && e.TTS_PROVIDER === 'espeak' && !e.ALLOW_DEV_TTS_IN_PRODUCTION)
+    p.push('TTS_PROVIDER=espeak is a development voice; configure Azure Speech in Admin → AI Models and set TTS_PROVIDER=azure');
+  if (e.SESSION_SECRET.length < 32) p.push('SESSION_SECRET must be at least 32 characters');
   return p;
 }

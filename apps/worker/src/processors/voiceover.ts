@@ -1,12 +1,11 @@
 import {
   prisma,
   storage,
-  env,
   keys,
-  synthesize,
+  synthesizeWith,
+  voiceModel,
   audioDuration,
   voiceHash,
-  isValidVoice,
   estimateVoiceCredits,
   computeTimeline,
   buildCues,
@@ -19,7 +18,8 @@ import type { JobContext } from '../context.js';
 export async function processVoiceover(ctx: JobContext) {
   const project = await prisma.project.findUnique({ where: { id: ctx.job.projectId! } });
   if (!project || project.deletedAt) throw new PermanentJobError('Project not found');
-  if (!isValidVoice(project.voiceName)) throw new PermanentJobError(`Voice ${project.voiceName} is not available`);
+  const voice = await voiceModel(project.voiceName);
+  if (!voice) throw new PermanentJobError('The selected voice is no longer available. Choose another voice and try again.');
   const segs = await prisma.scriptSegment.findMany({ where: { projectId: project.id }, orderBy: { idx: 'asc' } });
   if (!segs.length) throw new PermanentJobError('Script is empty');
 
@@ -32,7 +32,7 @@ export async function processVoiceover(ctx: JobContext) {
     const hash = voiceHash(s.narration, project.voiceName, project.voiceRate, project.voicePitch);
     const out = ctx.file(`v${s.idx}.mp3`);
     try {
-      await synthesize(s.narration, { voice: project.voiceName, rate: project.voiceRate, pitch: project.voicePitch, outFile: out, signal: ctx.signal });
+      await synthesizeWith(voice, s.narration, { rate: project.voiceRate, pitch: project.voicePitch, outFile: out, signal: ctx.signal });
     } catch (e) {
       if (e instanceof TtsError && !e.retryable) throw new PermanentJobError(e.message);
       throw e;
@@ -45,7 +45,7 @@ export async function processVoiceover(ctx: JobContext) {
     if (old && old !== key) await storage().delete(old).catch(() => undefined);
     const n = Array.from(s.narration).length;
     chars += n;
-    await ctx.usage('TTS_CHARS', n, (n / 1e6) * env().TTS_USD_PER_1M_CHARS);
+    await ctx.usage('TTS_CHARS', n, (n / 1e6) * voice.unitUsdPer1M, voice.id);
   }
 
   await ctx.progress(90, 'Creating Myanmar subtitles');

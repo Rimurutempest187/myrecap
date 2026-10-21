@@ -61,6 +61,24 @@ enum AssetStatus {
   DELETED
 }
 
+enum AiProviderKind {
+  OPENAI
+  GEMINI
+  ANTHROPIC
+  OPENROUTER
+  DEEPSEEK
+  GROQ
+  OPENAI_COMPATIBLE
+  AZURE_SPEECH
+  ESPEAK
+}
+
+enum AiModelKind {
+  CHAT
+  TTS_VOICE
+  STT
+}
+
 enum JobType {
   PROBE
   ANALYZE
@@ -280,6 +298,7 @@ model Project {
   subtitleStyle       Json?
   subtitlesEnabled    Boolean       @default(true)
   analysis            Json?
+  analysisModelId     String?
   copyrightConfirmedAt DateTime?
   copyrightIp         String?
   lastError           String?
@@ -361,13 +380,62 @@ model UsageEvent {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   jobId     String?
   job       Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  kind      String // LLM_INPUT_TOKENS | LLM_OUTPUT_TOKENS | TTS_CHARS | RENDER_SECONDS | ANALYZE_SECONDS
+  kind      String // LLM_INPUT_TOKENS | LLM_OUTPUT_TOKENS | TTS_CHARS | RENDER_SECONDS | ANALYZE_SECONDS | STT_MINUTES
+  modelId   String?
   quantity  Float
   costUsd   Float    @default(0)
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([createdAt])
+  @@index([modelId, createdAt])
+}
+
+/// An AI vendor account. API keys are encrypted at rest (AES-256-GCM) and never returned to clients.
+model AiProvider {
+  id              String         @id @default(cuid())
+  name            String
+  kind            AiProviderKind
+  baseUrl         String?
+  apiKeyEnc       String?
+  keyHint         String?
+  region          String?
+  config          Json?
+  enabled         Boolean        @default(true)
+  lastTestAt      DateTime?
+  lastTestOk      Boolean?
+  lastTestMessage String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  models AiModel[]
+}
+
+/// A runnable model on a provider: chat/vision LLM, TTS voice, or speech-to-text.
+model AiModel {
+  id                String      @id @default(cuid())
+  providerId        String
+  provider          AiProvider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  kind              AiModelKind
+  modelId           String
+  displayName       String
+  supportsVision    Boolean     @default(false)
+  jsonMode          Boolean     @default(true)
+  maxOutputTokens   Int?
+  inputUsdPer1M     Float       @default(0)
+  outputUsdPer1M    Float       @default(0)
+  unitUsdPer1M      Float       @default(0) // TTS: per 1M chars, STT: per minute (stored as USD per minute)
+  creditMultiplier  Float       @default(1)
+  userSelectable    Boolean     @default(false)
+  enabled           Boolean     @default(true)
+  sortOrder         Int         @default(0)
+  config            Json?
+  description       String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([providerId, kind, modelId])
+  @@index([kind, enabled])
 }
 
 model MusicTrack {
