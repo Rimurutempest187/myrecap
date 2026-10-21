@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { prisma, availableVoices, TRANSITIONS, CREDIT_RULES, storage, env, badRequest } from '@recap/core';
+import { prisma, availableVoices, defaultVoice, listActiveModels, getRouting, TRANSITIONS, CREDIT_RULES, storage, env, badRequest } from '@recap/core';
 import { body, z } from '../lib/validate.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { clientIp } from '../lib/auth.js';
@@ -10,9 +10,16 @@ export const metaRoutes = new Hono();
 metaRoutes.get('/config', async (c) => {
   const plans = await prisma.plan.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } });
   const packs = await prisma.creditPack.findMany({ where: { active: true }, orderBy: { credits: 'asc' } });
+  const [voices, defVoice, chatModels, routing] = await Promise.all([availableVoices(), defaultVoice(), listActiveModels('CHAT'), getRouting()]);
+  const engines = new Set(voices.map((v) => v.engine));
   return c.json({
-    voices: availableVoices(),
-    ttsProvider: env().TTS_PROVIDER,
+    voices,
+    defaultVoice: defVoice,
+    ttsProvider: voices.length === 0 ? 'none' : engines.size === 1 && engines.has('ESPEAK') ? 'espeak' : 'neural',
+    aiModels: routing.allowUserModelChoice
+      ? chatModels.filter((m) => m.userSelectable).map((m) => ({ id: m.id, label: m.displayName, provider: m.provider.name, vision: m.supportsVision, description: m.description, creditMultiplier: m.creditMultiplier }))
+      : [],
+    aiReady: chatModels.length > 0,
     transitions: TRANSITIONS,
     recapTypes: [
       { id: 'ANIME', label: 'Anime Recap', description: 'Dramatic episode/season recaps with character focus' },

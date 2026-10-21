@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { Activity, Users, ListChecks, CreditCard, Flag, Music, Settings, RefreshCw, XCircle, CheckCircle2, AlertTriangle, Upload } from 'lucide-react';
+import { Activity, Users, ListChecks, CreditCard, Flag, Music, Settings, KeyRound, RefreshCw, XCircle, CheckCircle2, AlertTriangle, Upload } from 'lucide-react';
 import { api, newRequestId, uploadWithProgress } from '@/lib/api';
 import { useToast } from '@/components/providers';
 import { ErrorState, Modal, PageLoader, StatusBadge, Spinner } from '@/components/ui';
+import { AiModelsTab } from './ai-models';
 
 const TABS = [
   { k: 'overview', l: 'Overview', i: Activity },
+  { k: 'ai', l: 'AI Models & Keys', i: KeyRound },
   { k: 'users', l: 'Users', i: Users },
   { k: 'jobs', l: 'Jobs', i: ListChecks },
   { k: 'plans', l: 'Plans & limits', i: CreditCard },
@@ -31,6 +33,7 @@ export default function AdminPage() {
         ))}
       </nav>
       {tab === 'overview' && <Overview />}
+      {tab === 'ai' && <AiModelsTab />}
       {tab === 'users' && <UsersTab />}
       {tab === 'jobs' && <JobsTab />}
       {tab === 'plans' && <PlansTab />}
@@ -105,7 +108,9 @@ function Overview() {
             <>
               <Check ok={h.db} label="PostgreSQL" />
               <Check ok={h.redis} label="Redis / BullMQ" />
-              <Check ok={h.llmConfigured} label="LLM API" detail={h.llmConfigured ? 'configured' : 'missing LLM_API_KEY'} />
+              <Check ok={h.llmConfigured} label="AI chat models" detail={h.ai ? `${h.ai.chatModels} active · ${h.ai.visionModels} vision` : ''} />
+              {h.ai?.failingProviders?.length > 0 && <Check ok={false} label="Provider key failing" detail={h.ai.failingProviders.join(', ')} />}
+              <Check ok={!!h.ai?.sttModels} label="Speech-to-text" detail={h.ai?.sttModels ? `${h.ai.sttModels} model(s)` : 'optional — improves accuracy'} />
               <Check ok={h.tts.ok} label={`TTS (${h.tts.provider})`} detail={h.tts.detail} />
               <Check ok={h.storage !== 'local'} label={`Storage: ${h.storage}`} detail={h.storage === 'local' ? 'use R2 in production' : ''} />
               <Check ok={h.payments} label="Stripe payments" detail={h.payments ? '' : 'not configured'} />

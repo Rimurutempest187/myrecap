@@ -33,7 +33,7 @@ export async function availableVoices(): Promise<VoiceOption[]> {
     label: v.displayName,
     provider: v.provider.name,
     engine: v.provider.kind,
-    description: String(v.config.description ?? (v.provider.kind === 'ESPEAK' ? 'Robotic open-source voice for local testing' : `${v.provider.name} · ${v.modelId}`)),
+    description: String(v.description ?? (v.provider.kind === 'ESPEAK' ? 'Robotic open-source voice for local testing' : `${v.provider.name} · ${v.modelId}`)),
   }));
 }
 
@@ -41,12 +41,20 @@ export async function defaultVoice(): Promise<string | null> {
   return (await listVoices()).defaultVoiceId;
 }
 
-export async function isValidVoice(id: string) {
-  return (await listVoices()).voices.some((v) => v.id === id);
+/** Find a voice by registry id; also accepts legacy ids (vendor voice name, "env:<voice>", "espeak-my"). */
+export async function voiceModel(id: string): Promise<ResolvedModel | null> {
+  const { voices } = await listVoices();
+  const bare = id.replace(/^env:/, '');
+  return (
+    voices.find((v) => v.id === id) ??
+    voices.find((v) => v.modelId === bare) ??
+    (id === 'espeak-my' ? voices.find((v) => v.provider.kind === 'ESPEAK') : undefined) ??
+    null
+  );
 }
 
-export async function voiceModel(id: string): Promise<ResolvedModel | null> {
-  return (await listVoices()).voices.find((v) => v.id === id) ?? null;
+export async function isValidVoice(id: string) {
+  return !!(await voiceModel(id));
 }
 
 export function escapeXml(s: string) {

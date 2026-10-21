@@ -17,7 +17,10 @@ import {
   computeTimeline,
   buildSrt,
   isValidVoice,
-  availableVoices,
+  defaultVoice,
+  getModel,
+  getRouting,
+  modelsForTask,
   TRANSITIONS,
   MY_CHARS_PER_SEC,
   keys,
@@ -60,6 +63,7 @@ const settingsSchema = z.object({
   transition: z.enum(TRANSITIONS).optional(),
   subtitleStyle: subtitleStyleSchema.nullable().optional(),
   subtitlesEnabled: z.boolean().optional(),
+  analysisModelId: z.string().max(80).nullable().optional(),
 });
 
 const BUSY = ['ANALYZING', 'VOICING', 'RENDERING'];
@@ -83,7 +87,12 @@ function toData(b: z.infer<typeof settingsSchema>): Prisma.ProjectUpdateInput {
 }
 
 async function validateSettings(b: z.infer<typeof settingsSchema>) {
-  if (b.voiceName && !isValidVoice(b.voiceName)) throw badRequest(`Unknown voice ${b.voiceName}`);
+  if (b.voiceName && !(await isValidVoice(b.voiceName))) throw badRequest(`Unknown voice ${b.voiceName}`);
+  if (b.analysisModelId) {
+    const [m, routing] = await Promise.all([getModel(b.analysisModelId), getRouting()]);
+    if (!m || m.kind !== 'CHAT') throw badRequest('Unknown AI model');
+    if (!routing.allowUserModelChoice || !m.userSelectable) throw badRequest('This AI model cannot be selected');
+  }
   if (b.musicTrackId) {
     const m = await prisma.musicTrack.findFirst({ where: { id: b.musicTrackId, active: true } });
     if (!m) throw badRequest('Unknown music track');
@@ -136,7 +145,7 @@ projectRoutes.post('/', rateLimit({ name: 'project-create', limit: 60, windowSec
       recapType: settings.recapType,
       aspectRatio: settings.aspectRatio ? RATIO[settings.aspectRatio] : settings.recapType === 'SHORTS' ? 'R9_16' : 'R16_9',
       targetDurationSec: settings.targetDurationSec ?? defaults[settings.recapType],
-      voiceName: settings.voiceName ?? availableVoices()[0].id,
+      voiceName: settings.voiceName ?? (await defaultVoice()) ?? 'my-MM-NilarNeural',
       user: { connect: { id: user.id } },
       copyrightConfirmedAt: new Date(),
       copyrightIp: clientIp(c),
@@ -192,6 +201,8 @@ async function estimates(projectId: string) {
   const p = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
   const source = p.sourceAssetId ? await prisma.asset.findUnique({ where: { id: p.sourceAssetId } }) : null;
   const segs = await prisma.scriptSegment.findMany({ where: { projectId } });
+  const scriptModel = (await modelsForTask('script', p.analysisModelId))[0] ?? null;
+  const analyzeMult = scriptModel?.creditMultiplier || 1;
   const pending = segs.filter((s) => !s.audioKey || s.audioTextHash !== voiceHash(s.narration, p.voiceName, p.voiceRate, p.voicePitch));
   const chars = pending.reduce((a, s) => a + Array.from(s.narration).length, 0);
   const allChars = segs.reduce((a, s) => a + Array.from(s.narration).length, 0);
@@ -201,7 +212,7 @@ async function estimates(projectId: string) {
       ).reduce((a, t) => a + t.duration, 0)
     : p.targetDurationSec;
   return {
-    analyze: source?.durationSec ? { credits: estimateAnalyzeCredits(source.durationSec), usd: round(estimateAnalyzeUsd(source.durationSec)) } : null,
+    analyze: source?.durationSec ? { credits: Math.max(1, Math.ceil(estimateAnalyzeCredits(source.durationSec) * analyzeMult)), usd: round(estimateAnalyzeUsd(source.durationSec)), model: scriptModel?.displayName ?? null } : null,
     voiceover: segs.length ? { credits: chars ? estimateVoiceCredits(chars) : 0, usd: round(estimateVoiceUsd(chars)), chars, totalChars: allChars, pendingSegments: pending.length } : null,
     render: segs.length ? { credits: estimateRenderCredits(outDur), usd: round(estimateRenderUsd(outDur)), outputDurationSec: Math.round(outDur) } : null,
   };
@@ -337,7 +348,11 @@ projectRoutes.post('/:id/analyze', jobLimiter, async (c) => {
   if (p.recapType === 'CUSTOM' && !p.customPrompt?.trim()) throw badRequest('Custom recap requires instructions');
   const plan = await effectivePlan(user);
   const b = await body(c, z.object({ requestId: z.string().min(8).max(64) }));
-  const credits = estimateAnalyzeCredits(source.durationSec);
+  // Pick the model that will write the script (user choice → route primary) to apply its credit multiplier.
+  const scriptModels = await modelsForTask('script', p.analysisModelId);
+  if (!scriptModels.length) throw badRequest('AI analysis is not available yet — no AI model is configured. Please contact support.');
+  const multiplier = scriptModels[0].creditMultiplier || 1;
+  const credits = Math.max(1, Math.ceil(estimateAnalyzeCredits(source.durationSec) * multiplier));
   const { job, created } = await createJob({
     userId: user.id,
     projectId: p.id,
@@ -347,7 +362,7 @@ projectRoutes.post('/:id/analyze', jobLimiter, async (c) => {
     idempotencyKey: `analyze:${p.id}:${b.requestId}`,
     maxConcurrent: plan.maxConcurrentJobs,
     projectStatus: 'ANALYZING',
-    input: { recapType: p.recapType, targetDurationSec: p.targetDurationSec },
+    input: { recapType: p.recapType, targetDurationSec: p.targetDurationSec, model: scriptModels[0].displayName, creditMultiplier: multiplier },
   });
   return c.json({ job: publicJob(job), created }, created ? 202 : 200);
 });
@@ -357,7 +372,7 @@ projectRoutes.post('/:id/voiceover', jobLimiter, async (c) => {
   const p = await ownProject(user.id, c.req.param('id'));
   const segs = await prisma.scriptSegment.findMany({ where: { projectId: p.id } });
   if (!segs.length) throw badRequest('Generate or write a script first');
-  if (!isValidVoice(p.voiceName)) throw badRequest('Selected voice is not available. Choose another voice.');
+  if (!(await isValidVoice(p.voiceName))) throw badRequest('Selected voice is not available. Choose another voice.');
   const b = await body(c, z.object({ requestId: z.string().min(8).max(64) }));
   const pending = segs.filter((s) => !s.audioKey || s.audioTextHash !== voiceHash(s.narration, p.voiceName, p.voiceRate, p.voicePitch));
   const chars = pending.reduce((a, s) => a + Array.from(s.narration).length, 0);

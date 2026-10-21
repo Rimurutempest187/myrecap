@@ -41,6 +41,8 @@ export interface ResolvedModel {
   outputUsdPer1M: number;
   unitUsdPer1M: number;
   creditMultiplier: number;
+  userSelectable: boolean;
+  description: string | null;
   config: Record<string, unknown>;
   provider: ResolvedProvider;
 }

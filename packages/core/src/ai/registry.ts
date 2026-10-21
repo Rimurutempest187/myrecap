@@ -74,6 +74,8 @@ export function resolveModel(m: AiModel & { provider: AiProvider }): ResolvedMod
     outputUsdPer1M: m.outputUsdPer1M,
     unitUsdPer1M: m.unitUsdPer1M,
     creditMultiplier: m.creditMultiplier,
+    userSelectable: m.userSelectable,
+    description: m.description,
     config: (m.config as Record<string, unknown>) ?? {},
     provider: resolveProvider(m.provider),
   };
@@ -83,7 +85,7 @@ export function resolveModel(m: AiModel & { provider: AiProvider }): ResolvedMod
 function envModels(): ResolvedModel[] {
   const e = env();
   const out: ResolvedModel[] = [];
-  const base = { jsonMode: true, maxOutputTokens: null, unitUsdPer1M: 0, creditMultiplier: 1, config: {} };
+  const base = { jsonMode: true, maxOutputTokens: null, unitUsdPer1M: 0, creditMultiplier: 1, userSelectable: true, description: null, config: {} };
   if (e.LLM_API_KEY) {
     const prov: ResolvedProvider = { id: 'env:llm', name: 'Env LLM', kind: 'OPENAI_COMPATIBLE', baseUrl: e.LLM_BASE_URL, apiKey: e.LLM_API_KEY, region: null, config: {} };
     out.push({ ...base, id: 'env:script', kind: 'CHAT', modelId: e.LLM_MODEL, displayName: `${e.LLM_MODEL} (env)`, supportsVision: true, inputUsdPer1M: e.LLM_INPUT_USD_PER_1M, outputUsdPer1M: e.LLM_OUTPUT_USD_PER_1M, provider: prov });

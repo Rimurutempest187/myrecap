@@ -10,7 +10,8 @@ import {
   queueStats,
   storage,
   keys,
-  ttsHealth,
+  listActiveModels,
+  getRouting,
   requestCancel,
 
   env,
@@ -21,9 +22,11 @@ import { requireAdmin } from '../lib/auth.js';
 import { publicJob, publicUser, publicPlan } from '../lib/serialize.js';
 import { audit } from '../lib/audit.js';
 import type { AppEnv } from '../lib/types.js';
+import { adminAiRoutes } from './admin-ai.js';
 
 export const adminRoutes = new Hono<AppEnv>();
 adminRoutes.use('*', requireAdmin);
+adminRoutes.route('/ai', adminAiRoutes);
 
 adminRoutes.get('/stats', async (c) => {
   const since30 = new Date(Date.now() - 30 * 86400_000);
@@ -61,12 +64,34 @@ adminRoutes.get('/stats', async (c) => {
 });
 
 adminRoutes.get('/health', async (c) => {
-  const [db, tts, q] = await Promise.all([
+  const [db, q, models, routing, providers] = await Promise.all([
     prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false),
-    ttsHealth(),
     queueStats().then(() => true).catch(() => false),
+    listActiveModels(),
+    getRouting(),
+    prisma.aiProvider.findMany({ select: { name: true, enabled: true, lastTestOk: true } }),
   ]);
-  return c.json({ db, redis: q, tts, llmConfigured: !!env().LLM_API_KEY, storage: env().STORAGE_DRIVER, payments: !!env().STRIPE_SECRET_KEY });
+  const chat = models.filter((m) => m.kind === 'CHAT');
+  const voices = models.filter((m) => m.kind === 'TTS_VOICE');
+  const neural = voices.filter((v) => v.provider.kind !== 'ESPEAK');
+  return c.json({
+    db,
+    redis: q,
+    ai: {
+      chatModels: chat.length,
+      visionModels: chat.filter((m) => m.supportsVision).length,
+      sttModels: models.filter((m) => m.kind === 'STT').length,
+      voices: voices.length,
+      neuralVoices: neural.length,
+      providers: providers.length,
+      failingProviders: providers.filter((p) => p.enabled && p.lastTestOk === false).map((p) => p.name),
+      routed: { vision: !!routing.vision.primary, script: !!routing.script.primary, stt: !!routing.stt.primary },
+    },
+    tts: { ok: voices.length > 0, provider: neural.length ? 'neural' : voices.length ? 'espeak' : 'none', detail: voices.length ? `${voices.length} voice(s), ${neural.length} neural` : 'No voices configured — add Azure Speech or OpenAI TTS in AI Models' },
+    llmConfigured: chat.length > 0,
+    storage: env().STORAGE_DRIVER,
+    payments: !!env().STRIPE_SECRET_KEY,
+  });
 });
 
 adminRoutes.get('/users', async (c) => {

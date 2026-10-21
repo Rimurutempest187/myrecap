@@ -82,6 +82,7 @@ export function publicProject(p: Project) {
     targetDurationSec: p.targetDurationSec,
     status: p.status,
     voiceName: p.voiceName,
+    analysisModelId: p.analysisModelId,
     voiceRate: p.voiceRate,
     voicePitch: p.voicePitch,
     originalAudioVolume: p.originalAudioVolume,

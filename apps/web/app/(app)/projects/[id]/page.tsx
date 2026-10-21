@@ -20,7 +20,8 @@ interface Project {
   id: string; title: string; recapType: string; aspectRatio: string; fitMode: string; customPrompt: string | null; targetDurationSec: number; status: string;
   voiceName: string; voiceRate: number; voicePitch: number; originalAudioVolume: number; musicTrackId: string | null; musicVolume: number; transition: string;
   subtitleStyle: { fontSize?: number; primaryColor?: string; outlineColor?: string; boxed?: boolean; position?: string } | null; subtitlesEnabled: boolean;
-  analysis: { aiTitle?: string; summary?: string; sceneCount?: number; framesAnalyzed?: number } | null; lastError: string | null;
+  analysis: { aiTitle?: string; summary?: string; sceneCount?: number; framesAnalyzed?: number; models?: { task: string; model: string; provider: string }[] } | null; lastError: string | null;
+  analysisModelId: string | null;
 }
 interface Estimate { credits: number; usd: number; [k: string]: any }
 interface Detail {
@@ -29,7 +30,8 @@ interface Detail {
   thumbnailUrl: string | null; segments: Segment[]; subtitles: Sub[]; jobs: Job[];
   estimates: { analyze: Estimate | null; voiceover: Estimate | null; render: Estimate | null };
 }
-interface Config { voices: { id: string; label: string; description: string }[]; transitions: string[]; ttsProvider: string }
+interface AiModelOpt { id: string; label: string; provider: string; vision: boolean; description: string | null; creditMultiplier: number }
+interface Config { voices: { id: string; label: string; description: string; provider?: string; engine?: string }[]; transitions: string[]; ttsProvider: string; aiModels: AiModelOpt[]; aiReady: boolean; defaultVoice: string | null }
 interface Track { id: string; title: string; artist: string; license: string; licenseUrl: string | null; durationSec: number; mood: string | null; previewUrl: string }
 
 const STEPS = [
@@ -341,7 +343,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       )}
 
       {step === 'upload' && <UploadStep d={d} id={id} reload={load} running={running} goNext={() => setStep('analyze')} maxMb={user?.plan?.maxUploadMb ?? 300} />}
-      {step === 'analyze' && <AnalyzeStep d={d} running={running} busy={busy === 'analyze'} start={() => startJob('analyze')} patch={patch} goNext={() => setStep('script')} />}
+      {step === 'analyze' && <AnalyzeStep d={d} cfg={cfg} running={running} busy={busy === 'analyze'} start={() => startJob('analyze')} patch={patch} goNext={() => setStep('script')} />}
       {step === 'script' && (
         <ScriptStep
           d={d} segs={segs} setSegs={(s) => { setSegs(s); setDirtyScript(true); }} dirty={dirtyScript} running={running}
@@ -455,7 +457,7 @@ function UploadStep({ d, id, reload, running, goNext, maxMb }: { d: Detail; id: 
   );
 }
 
-function AnalyzeStep({ d, running, busy, start, patch, goNext }: { d: Detail; running: boolean; busy: boolean; start: () => void; patch: (x: any, q?: boolean) => Promise<boolean>; goNext: () => void }) {
+function AnalyzeStep({ d, cfg, running, busy, start, patch, goNext }: { d: Detail; cfg: Config | null; running: boolean; busy: boolean; start: () => void; patch: (x: any, q?: boolean) => Promise<boolean>; goNext: () => void }) {
   const { user } = useAuth();
   const p = d.project;
   const [prompt, setPrompt] = useState(p.customPrompt ?? '');
@@ -484,6 +486,23 @@ function AnalyzeStep({ d, running, busy, start, patch, goNext }: { d: Detail; ru
           </select>
         </div>
       </div>
+      {cfg && cfg.aiModels.length > 0 && (
+        <div>
+          <label className="label" htmlFor="aimodel">AI model</label>
+          <select id="aimodel" className="input" value={p.analysisModelId ?? ''} disabled={running} onChange={(e) => patch({ analysisModelId: e.target.value || null }, true)}>
+            <option value="">Recommended (automatic, with failover)</option>
+            {cfg.aiModels.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label} · {m.provider}{m.creditMultiplier !== 1 ? ` · ${m.creditMultiplier}× credits` : ''}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs muted mt-1">
+            {cfg.aiModels.find((m) => m.id === p.analysisModelId)?.description ?? 'The admin-recommended model writes your script. If it is busy, a backup model takes over automatically.'}
+          </p>
+        </div>
+      )}
+      {cfg && !cfg.aiReady && <p className="text-sm text-red-500 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> AI analysis is temporarily unavailable. Please try again later or write the script manually.</p>}
       <div>
         <label className="label" htmlFor="cp">{p.recapType === 'CUSTOM' ? 'Custom instructions (required)' : 'Extra instructions (optional)'}</label>
         <textarea id="cp" rows={3} maxLength={2000} className="input" placeholder="e.g. Mention the main character is named Kaito. Keep a suspenseful tone." value={prompt} onChange={(e) => setPrompt(e.target.value)} onBlur={() => prompt !== (p.customPrompt ?? '') && patch({ customPrompt: prompt || null }, true)} disabled={running} />
@@ -501,6 +520,13 @@ function AnalyzeStep({ d, running, busy, start, patch, goNext }: { d: Detail; ru
           <p className="font-semibold mb-1 my-text">{p.analysis.aiTitle}</p>
           <p className="muted">{p.analysis.summary}</p>
           <p className="text-xs muted mt-2">{p.analysis.sceneCount} scenes detected · {p.analysis.framesAnalyzed} frames analyzed</p>
+          {!!p.analysis.models?.length && (
+            <p className="text-xs muted mt-1 flex flex-wrap gap-1.5">
+              {p.analysis.models.map((m) => (
+                <span key={m.task} className="badge bg-brand-500/10">{m.task === 'vision' ? 'Vision' : m.task === 'script' ? 'Script' : 'Speech'}: {m.model}</span>
+              ))}
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -635,7 +661,7 @@ function VoiceStep({ d, cfg, running, busy, start, patch, dirtyScript, goNext }:
     <div className="grid lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
       <section className="card p-5 space-y-5 self-start">
         <h2 className="font-semibold text-lg">Myanmar AI voice</h2>
-        {cfg?.ttsProvider === 'espeak' && <p className="text-xs text-amber-500 bg-amber-500/10 rounded-lg p-2">Development voice (eSpeak NG) is active. Configure Azure Speech for natural Myanmar neural voices.</p>}
+        {cfg?.ttsProvider === 'espeak' && <p className="text-xs text-amber-500 bg-amber-500/10 rounded-lg p-2">Development voice (eSpeak NG) is active. An admin can add Azure Speech or OpenAI voices in Admin → AI Models for natural Myanmar narration.</p>}
         <div className="space-y-2" role="radiogroup" aria-label="Voice">
           {cfg?.voices.map((v) => (
             <button key={v.id} role="radio" aria-checked={p.voiceName === v.id} disabled={running} onClick={() => patch({ voiceName: v.id }, true)} className={clsx('card w-full p-3 text-left flex items-center gap-3 transition', p.voiceName === v.id ? 'border-brand-500 ring-2 ring-brand-500/30' : 'hover:border-brand-400')}>
