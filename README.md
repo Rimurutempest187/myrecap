@@ -15,7 +15,8 @@ Supports **Anime Recap, Movie Recap, Long-to-Shorts, Highlights and Custom Recap
 | Project dashboard, search, filters, history, duplicate, delete | ✅ Working |
 | Uploads: presigned direct-to-storage, type/size limits, ffprobe validation, duration limits by plan | ✅ Working |
 | Scene detection (FFmpeg) + key-frame sampling | ✅ Working |
-| AI vision analysis + Myanmar script with timestamp selection (OpenAI-compatible API) | ✅ Implemented — needs an API key with credits (see §8) |
+| AI vision analysis + Myanmar script with timestamp selection | ✅ Implemented — needs a provider API key (see §8) |
+| **Admin → AI Models & Keys**: per-provider encrypted API keys (OpenAI, Gemini, Claude, OpenRouter, DeepSeek, Groq, custom OpenAI-compatible, Azure Speech, eSpeak), key test, model discovery, per-model pricing & credit multiplier, task routing (vision / script / STT) with ordered fallbacks and automatic failover, default voice, optional user model choice, 30-day usage per model | ✅ Working |
 | Optional dialogue transcription (Whisper API) | ✅ Implemented (optional) |
 | Script editor: narration, timestamps, add/remove/reorder, clip preview | ✅ Working |
 | Myanmar voiceover — Azure Neural `my-MM-NilarNeural` / `my-MM-ThihaNeural`, speed and pitch | ✅ Implemented — needs an Azure Speech key |
@@ -143,10 +144,20 @@ Recommended host: a Linux VM (Ubuntu 22.04+) with **≥ 4 vCPU / 8 GB RAM** for 
 git clone <repo> recapai && cd recapai
 cp .env.example .env && nano .env        # set every "change-me" value + keys above
 openssl rand -hex 32                     # → SESSION_SECRET
+openssl rand -hex 32                     # → SECRETS_KEY (encrypts provider API keys; never change it)
 docker compose up -d --build
 docker compose logs -f api worker        # migrations + seed run automatically on API start
 ```
 Open `https://<DOMAIN>` and log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Change that password immediately on the Account page.
+
+### 5.3 Connect AI models (Admin → AI Models & Keys)
+1. **Add provider key** → choose the provider (e.g. Google Gemini), paste the key, keep "Add recommended models" ticked → **Save & test**. The key is encrypted with `SECRETS_KEY` (AES-256-GCM); only a hint like `AIz…9xQ` is ever shown again.
+2. Add a voice provider: **Microsoft Azure AI Speech** (key + region) gives the natural Burmese voices `my-MM-NilarNeural` / `my-MM-ThihaNeural`. Use **Test** on a voice to hear a sample.
+3. Optional: OpenAI or Groq **Whisper** for speech-to-text of original dialogue.
+4. **Task routing**: pick a primary model and fallbacks for *Vision analysis*, *Burmese script writer* and *Speech-to-text*, and the default voice. If the primary fails (rate limit, outage, invalid key, no credit) the next model runs automatically; the job is only retried later if a failure was transient.
+5. Per model: set prices (for provider-cost tracking), a **credit multiplier** (charge more credits for premium models), **User can pick** (shows the model in the project editor) and enable/disable. "Browse" lists every model the key can access.
+
+Changes apply to new jobs within 15 seconds (API and worker cache the registry briefly).
 
 Scale rendering: `docker compose up -d --scale worker=3`. Workers can also run on separate machines pointing at the same Postgres, Redis and R2.
 
@@ -195,16 +206,20 @@ Upgrade: `git pull && docker compose up -d --build`. Migrations apply automatica
 | GET | `/api/billing/summary` · POST `/checkout/subscription` · `/checkout/credits` · `/portal` · `/webhook` | Credits and Stripe |
 | GET | `/api/config` · `/api/music` · POST `/api/takedown` | Public config, licensed music, DMCA form |
 | * | `/api/admin/*` | Stats, health, users, credits, jobs, plans, packs, settings, reports, music, audit |
+| GET/POST/PATCH/DELETE | `/api/admin/ai/providers[/:id]` · POST `/:id/test` · GET `/:id/discover` | Provider keys (write-only), key test, model discovery |
+| GET/POST/PATCH/DELETE | `/api/admin/ai/models[/:id]` · POST `/:id/test` | Models; live test (chat JSON ping, voice sample, STT) |
+| GET/PUT | `/api/admin/ai/routing` | Task routing + fallbacks, default voice, user model choice |
 
 ---
 
 ## 7. Data model (PostgreSQL / Prisma)
-`User`, `Session`, `Plan`, `CreditPack`, `Subscription`, `Payment`, `CreditLedger` (append-only, idempotent), `Asset` (source / voice / render / thumbnail in R2), `Project`, `ScriptSegment`, `Subtitle`, `Job`, `UsageEvent`, `MusicTrack` (with license), `TakedownReport`, `AuditLog`, `SystemSetting`.
+`User`, `Session`, `Plan`, `CreditPack`, `Subscription`, `Payment`, `CreditLedger` (append-only, idempotent), `Asset` (source / voice / render / thumbnail in R2), `Project`, `ScriptSegment`, `Subtitle`, `Job`, `UsageEvent`, `MusicTrack` (with license), `TakedownReport`, `AuditLog`, `SystemSetting` (incl. `aiRouting`), `AiProvider` (encrypted key), `AiModel` (kind CHAT / TTS_VOICE / STT, prices, credit multiplier). `UsageEvent.modelId` records which model ran.
 Migrations live in `packages/core/prisma/migrations`. Create a new one with `npm run db:migrate -- --name <change>`.
 
 ---
 
 ## 8. Notes on AI providers
+- All AI calls go through the model registry (`packages/core/src/ai/registry.ts`) and provider adapters (`ai/providers.ts`, `tts/index.ts`). Models configured in the Admin Console take precedence; env vars are a fallback.
 - **The LLM key in the development sandbox is a free-plan proxy key and is rejected for API use.** The analysis job fails cleanly with a clear error and a full credit refund. With a valid key the same code path runs unchanged. The script editor also lets users write or paste narration manually.
 - Burmese quality depends on the model; GPT-4o-class or Gemini 1.5/2.x models produce natural spoken Myanmar. Scripts with less than 70% Myanmar characters are automatically rejected and regenerated.
 - Azure `my-MM` voices are Microsoft's officially supported Burmese neural voices. The provider interface (`packages/core/src/tts`) makes adding another verified Burmese TTS straightforward.

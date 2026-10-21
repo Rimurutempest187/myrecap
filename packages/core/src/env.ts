@@ -118,7 +118,8 @@ export function productionConfigProblems(e: Env = env(), role: 'api' | 'worker' 
   if (e.STORAGE_DRIVER === 'r2' && !e.R2_ACCOUNT_ID && !e.S3_ENDPOINT) p.push('R2_ACCOUNT_ID (or S3_ENDPOINT) is required for r2');
   // AI provider keys are managed in Admin → AI Models (encrypted in DB); env keys are optional bootstrap.
   if (role === 'worker' && e.TTS_PROVIDER === 'espeak' && !e.ALLOW_DEV_TTS_IN_PRODUCTION)
-    p.push('TTS_PROVIDER=espeak is a development voice; configure Azure Speech in Admin → AI Models and set TTS_PROVIDER=azure');
+    p.push('TTS_PROVIDER=espeak is a development voice; add Azure Speech (or another neural voice) in Admin → AI Models and set TTS_PROVIDER=none');
   if (e.SESSION_SECRET.length < 32) p.push('SESSION_SECRET must be at least 32 characters');
+  if (!process.env.SECRETS_KEY || process.env.SECRETS_KEY.length < 32) p.push('SECRETS_KEY should be set (32+ chars) to encrypt AI provider API keys independently of SESSION_SECRET');
   return p;
 }
