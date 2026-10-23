@@ -51,6 +51,9 @@ export async function destroySession(c: Context) {
 }
 
 export function clientIp(c: Context): string {
+  // Behind Cloudflare the real visitor IP is in CF-Connecting-IP (Caddy only accepts traffic from Cloudflare when TRUST_CLOUDFLARE=true).
+  const cf = process.env.TRUST_CLOUDFLARE === 'true' ? c.req.header('cf-connecting-ip') : undefined;
+  if (cf) return cf.trim();
   const xf = c.req.header('x-forwarded-for');
   if (xf) return xf.split(',')[0].trim();
   return c.req.header('x-real-ip') || (c.env as any)?.incoming?.socket?.remoteAddress || 'unknown';

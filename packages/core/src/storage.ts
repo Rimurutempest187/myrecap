@@ -110,6 +110,43 @@ class LocalStorage implements Storage {
     return total;
   }
 
+  /**
+   * Chunked upload (needed behind Cloudflare, which caps request bodies at 100 MB on free plans).
+   * Chunks must arrive in order; each chunk is appended at `offset`. The file is published when complete.
+   */
+  async writeChunk(key: string, body: Readable, offset: number, chunkBytes: number, totalBytes: number): Promise<{ received: number; complete: boolean }> {
+    const dest = this.pathFor(key);
+    await mkdir(path.dirname(dest), { recursive: true });
+    const tmp = `${dest}.uploading`;
+    if (offset === 0) await rm(tmp, { force: true });
+    else {
+      const cur = await stat(tmp).then((x) => x.size).catch(() => -1);
+      if (cur !== offset) throw Object.assign(new Error(`Expected offset ${cur < 0 ? 0 : cur}`), { status: 409, expected: Math.max(cur, 0) });
+    }
+    let total = 0;
+    body.on('data', (c: Buffer) => {
+      total += c.length;
+      if (total > chunkBytes || offset + total > totalBytes) body.destroy(new Error('Chunk exceeds declared size'));
+    });
+    try {
+      await pipeline(body, createWriteStream(tmp, { flags: offset === 0 ? 'w' : 'r+', start: offset }));
+    } catch (e) {
+      // truncate back to the last good offset so the client can resend this chunk
+      await import('node:fs/promises').then((f) => f.truncate(tmp, offset)).catch(() => undefined);
+      throw e;
+    }
+    if (total !== chunkBytes) {
+      await import('node:fs/promises').then((f) => f.truncate(tmp, offset)).catch(() => undefined);
+      throw new Error('Chunk incomplete');
+    }
+    const received = offset + total;
+    if (received === totalBytes) {
+      await rename(tmp, dest);
+      return { received, complete: true };
+    }
+    return { received, complete: false };
+  }
+
   readStream(key: string, range?: { start: number; end: number }) {
     return createReadStream(this.pathFor(key), range);
   }

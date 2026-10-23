@@ -41,7 +41,7 @@ COPY --from=build /app/packages/core/prisma packages/core/prisma
 COPY --from=build /app/apps/api/package.json apps/api/
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY docker/entrypoint-api.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && useradd -r -u 10001 -g node app && mkdir -p /data && chown app:node /data
+RUN chmod +x /entrypoint.sh && useradd -r -u 10001 -g node app && mkdir -p /data/storage && chown -R app:node /data
 USER app
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD node -e "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
@@ -61,7 +61,7 @@ COPY --from=build /app/packages/core/dist packages/core/dist
 COPY --from=build /app/packages/core/prisma packages/core/prisma
 COPY --from=build /app/apps/worker/package.json apps/worker/
 COPY --from=build /app/apps/worker/dist apps/worker/dist
-RUN useradd -r -u 10001 -g node app && mkdir -p /work && chown app:node /work
+RUN useradd -r -u 10001 -g node app && mkdir -p /work /data/storage && chown -R app:node /work /data
 USER app
 EXPOSE 4100
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD node -e "fetch('http://127.0.0.1:4100').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

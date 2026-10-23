@@ -1,0 +1,27 @@
+# Overrides for a single VPS behind Cloudflare.
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.cloudflare.yml up -d --build
+services:
+  api:
+    environment:
+      TRUST_CLOUDFLARE: "true"
+      LOCAL_STORAGE_DIR: /data/storage
+    volumes:
+      - media:/data/storage
+
+  worker:
+    environment:
+      TRUST_CLOUDFLARE: "true"
+      LOCAL_STORAGE_DIR: /data/storage
+    volumes:
+      - workdir:/work
+      - media:/data/storage
+
+  caddy:
+    volumes:
+      - ./deploy/Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro
+      - ./deploy/certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  media:

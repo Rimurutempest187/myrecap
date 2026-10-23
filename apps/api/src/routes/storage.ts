@@ -17,9 +17,22 @@ storageRoutes.put('/local', async (c) => {
   const ct = c.req.header('content-type');
   if (ct !== q.ct) throw badRequest('Content-Type mismatch');
   const len = Number(c.req.header('content-length'));
-  if (len && len !== size) throw badRequest('Content-Length mismatch');
+  if (q.offset === undefined && len && len !== size) throw badRequest('Content-Length mismatch');
   const body = c.req.raw.body;
   if (!body) throw badRequest('Empty body');
+  if (q.offset !== undefined) {
+    // Chunked mode
+    const offset = Number(q.offset);
+    if (!Number.isInteger(offset) || offset < 0 || offset >= size) throw badRequest('Invalid offset');
+    if (!len || len > 100 * 1024 * 1024 || offset + len > size) throw badRequest('Invalid chunk size');
+    try {
+      const r = await localStorageDriver().writeChunk(q.key, Readable.fromWeb(body as any), offset, len, size);
+      return c.json(r);
+    } catch (e: any) {
+      if (e?.status === 409) return c.json({ error: { code: 'OFFSET_MISMATCH', message: e.message }, expected: e.expected }, 409);
+      throw badRequest(e?.message ?? 'Chunk upload failed');
+    }
+  }
   const written = await localStorageDriver().writeStream(q.key, Readable.fromWeb(body as any), size);
   if (written !== size) throw badRequest('Upload incomplete');
   return c.body(null, 200);

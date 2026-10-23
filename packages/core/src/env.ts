@@ -55,6 +55,8 @@ const schema = z.object({
   AZURE_SPEECH_REGION: z.string().optional(),
   TTS_USD_PER_1M_CHARS: z.coerce.number().default(16),
   ALLOW_DEV_TTS_IN_PRODUCTION: bool.default(false),
+  /** Single-server deployments may keep media on the local disk (Docker volume) instead of R2/S3. */
+  ALLOW_LOCAL_STORAGE_IN_PRODUCTION: bool.default(false),
 
   // Worker / FFmpeg
   WORK_DIR: z.string().default('./tmp'),
@@ -112,7 +114,9 @@ export function resetEnvCache() {
 export function productionConfigProblems(e: Env = env(), role: 'api' | 'worker' = 'api'): string[] {
   const p: string[] = [];
   if (e.NODE_ENV !== 'production') return p;
-  if (e.STORAGE_DRIVER === 'local') p.push('STORAGE_DRIVER=local is not allowed in production; use r2 or s3');
+  if (e.STORAGE_DRIVER === 'local' && !e.ALLOW_LOCAL_STORAGE_IN_PRODUCTION)
+    p.push('STORAGE_DRIVER=local needs ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true (single-server only); otherwise use r2 or s3');
+  if (e.STORAGE_DRIVER === 'local' && !/^https:\/\//.test(e.API_PUBLIC_URL)) p.push('API_PUBLIC_URL must be your public https:// URL');
   if (e.STORAGE_DRIVER !== 'local' && (!e.S3_ACCESS_KEY_ID || !e.S3_SECRET_ACCESS_KEY || !e.S3_BUCKET))
     p.push('S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_BUCKET are required');
   if (e.STORAGE_DRIVER === 'r2' && !e.R2_ACCOUNT_ID && !e.S3_ENDPOINT) p.push('R2_ACCOUNT_ID (or S3_ENDPOINT) is required for r2');
