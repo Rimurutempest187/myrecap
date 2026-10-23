@@ -24,6 +24,7 @@ Supports **Anime Recap, Movie Recap, Long-to-Shorts, Highlights and Custom Recap
 | Auto Myanmar subtitles: syllable-safe line breaks, timed to voice, editable text and timing, style, SRT export | ✅ Working |
 | FFmpeg render: per-scene clips, blur-fill or crop, transitions, original-audio ducking, licensed music, loudness normalization, burned-in subtitles, H.264/AAC faststart | ✅ Working |
 | Live progress (SSE + Redis pub/sub), cancel, retry, idempotent job creation | ✅ Working |
+| **Auto-Pilot (one-click recap)**: upload → AI analysis → Burmese script → Gemini/Azure voice → subtitles → MP4 with no clicks; same credit reservations and limits per step; stops cleanly on failure/cancel/insufficient credits; user can edit and re-render afterwards | ✅ Working (verified: 72s source → 53s 9:16 recap) |
 | Credits: estimate → reserve → settle/refund, ledger, monthly spending limit, plan quotas | ✅ Working |
 | Stripe subscriptions + credit packs (Checkout, Billing Portal, signed idempotent webhooks) | ✅ Implemented — needs Stripe keys |
 | Admin: stats, health, users, credits, plans and limits, jobs, takedowns, music library, audit log | ✅ Working |

@@ -90,7 +90,8 @@ export function clipArgs(args: {
     '-i', args.input,
     '-filter_complex', vf + af,
     '-map', '[v]', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', args.preset, '-crf', '20', '-pix_fmt', 'yuv420p',
+    // Intermediate clip: fast near-lossless encode (only the final pass uses the quality preset).
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '12', '-pix_fmt', 'yuv420p',
     '-r', String(args.fps),
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2',
     ...(args.threads ? ['-threads', String(args.threads)] : []),

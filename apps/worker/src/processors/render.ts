@@ -126,7 +126,7 @@ export async function processRender(ctx: JobContext) {
     args.push(
       '-filter_complex', g.filter,
       '-map', '[vout]', '-map', '[aout]',
-      '-c:v', 'libx264', '-preset', preset, '-crf', '19', '-pix_fmt', 'yuv420p', '-r', String(fps),
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '12', '-pix_fmt', 'yuv420p', '-r', String(fps),
       '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
       ...(threads ? ['-threads', String(threads)] : []),
       joined,
