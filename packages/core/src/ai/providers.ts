@@ -9,7 +9,7 @@ import { LlmError } from './llm.js';
 
 export const PROVIDER_DEFAULTS: Record<AiProviderKind, { label: string; baseUrl?: string; capabilities: Array<'CHAT' | 'TTS_VOICE' | 'STT'>; keyRequired: boolean; docs: string }> = {
   OPENAI: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', capabilities: ['CHAT', 'STT', 'TTS_VOICE'], keyRequired: true, docs: 'https://platform.openai.com/api-keys' },
-  GEMINI: { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', capabilities: ['CHAT'], keyRequired: true, docs: 'https://aistudio.google.com/apikey' },
+  GEMINI: { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', capabilities: ['CHAT', 'TTS_VOICE', 'STT'], keyRequired: true, docs: 'https://aistudio.google.com/apikey' },
   ANTHROPIC: { label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com/v1', capabilities: ['CHAT'], keyRequired: true, docs: 'https://console.anthropic.com/settings/keys' },
   OPENROUTER: { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', capabilities: ['CHAT'], keyRequired: true, docs: 'https://openrouter.ai/keys' },
   DEEPSEEK: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', capabilities: ['CHAT'], keyRequired: true, docs: 'https://platform.deepseek.com/api_keys' },
@@ -173,8 +173,16 @@ export async function discoverModels(p: ResolvedProvider): Promise<Array<{ id: s
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data: any = await res.json();
   const ids: string[] = (data.data ?? data.models ?? []).map((x: any) => String(x.id ?? x.name ?? '').replace(/^models\//, '')).filter(Boolean);
-  return ids
-    .map((id) => ({ id, kind: (/whisper|transcribe/i.test(id) ? 'STT' : /tts/i.test(id) ? 'TTS_VOICE' : 'CHAT') as 'CHAT' | 'TTS_VOICE' | 'STT' }))
-    .filter((x) => !/embed|moderation|dall-e|image|davinci|babbage|realtime|search/i.test(x.id))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const NOT_CHAT = /embed|moderation|dall-e|image|davinci|babbage|realtime|search|banana|lyria|veo|imagen|robotics|computer-use|live|native-audio|aqa|antigravity|deep-research|omni|gemma-3n|learnlm/i;
+  const out: Array<{ id: string; kind: 'CHAT' | 'TTS_VOICE' | 'STT'; label?: string }> = [];
+  for (const id of ids) {
+    if (/whisper|transcribe/i.test(id)) out.push({ id, kind: 'STT' });
+    else if (/tts/i.test(id)) {
+      if (p.kind === 'GEMINI') {
+        // Gemini TTS: one entry per recommended Burmese-capable voice, as "model:voice".
+        for (const v of ['Kore', 'Charon', 'Puck', 'Aoede', 'Fenrir', 'Leda', 'Orus', 'Sulafat']) out.push({ id: `${id}:${v}`, kind: 'TTS_VOICE', label: `${v} (${id})` });
+      } else out.push({ id, kind: 'TTS_VOICE' });
+    } else if (!NOT_CHAT.test(id)) out.push({ id, kind: 'CHAT' });
+  }
+  return out.sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
 }

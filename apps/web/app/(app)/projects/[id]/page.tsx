@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import {
   ArrowLeft, Upload, ScanSearch, PenLine, Mic, Captions, Film, Download, Trash2, Plus, ArrowUp, ArrowDown, Play, Pause,
-  RotateCcw, XCircle, Save, Sparkles, AlertTriangle, Coins, Copy, FileText, CheckCircle2, Volume2,
+  RotateCcw, XCircle, Save, Sparkles, AlertTriangle, Coins, Copy, FileText, CheckCircle2, Volume2, Square,
 } from 'lucide-react';
 import { api, newRequestId, mediaUrl, fmtTime, fmtBytes, uploadWithProgress } from '@/lib/api';
 import { useAuth, useJobEvents, useToast } from '@/components/providers';
@@ -661,16 +661,22 @@ function VoiceStep({ d, cfg, running, busy, start, patch, dirtyScript, goNext }:
     <div className="grid lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
       <section className="card p-5 space-y-5 self-start">
         <h2 className="font-semibold text-lg">Myanmar AI voice</h2>
-        {cfg?.ttsProvider === 'espeak' && <p className="text-xs text-amber-500 bg-amber-500/10 rounded-lg p-2">Development voice (eSpeak NG) is active. An admin can add Azure Speech or OpenAI voices in Admin → AI Models for natural Myanmar narration.</p>}
+        {cfg?.ttsProvider === 'espeak' && <p className="text-xs text-amber-500 bg-amber-500/10 rounded-lg p-2">Development voice (eSpeak NG) is active. An admin can add natural Myanmar voices with a Gemini API key in Admin → AI Models (Azure Speech is optional).</p>}
+        {cfg && cfg.voices.length > 0 && !cfg.voices.some((v) => v.id === p.voiceName) && (
+          <p className="text-xs text-amber-500 bg-amber-500/10 rounded-lg p-2">Your previous voice is no longer available — choose one of the voices below.</p>
+        )}
         <div className="space-y-2" role="radiogroup" aria-label="Voice">
           {cfg?.voices.map((v) => (
-            <button key={v.id} role="radio" aria-checked={p.voiceName === v.id} disabled={running} onClick={() => patch({ voiceName: v.id }, true)} className={clsx('card w-full p-3 text-left flex items-center gap-3 transition', p.voiceName === v.id ? 'border-brand-500 ring-2 ring-brand-500/30' : 'hover:border-brand-400')}>
-              <Volume2 className={clsx('w-5 h-5', p.voiceName === v.id ? 'text-brand-500' : 'muted')} />
-              <div>
-                <p className="text-sm font-semibold my-text">{v.label}</p>
-                <p className="text-xs muted">{v.description}</p>
-              </div>
-            </button>
+            <div key={v.id} className={clsx('card w-full p-3 flex items-center gap-3 transition', p.voiceName === v.id ? 'border-brand-500 ring-2 ring-brand-500/30' : 'hover:border-brand-400')}>
+              <button role="radio" aria-checked={p.voiceName === v.id} disabled={running} onClick={() => patch({ voiceName: v.id }, true)} className="flex-1 min-w-0 text-left flex items-center gap-3">
+                <Volume2 className={clsx('w-5 h-5 shrink-0', p.voiceName === v.id ? 'text-brand-500' : 'muted')} />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold my-text">{v.label}</p>
+                  <p className="text-xs muted">{v.description}</p>
+                </div>
+              </button>
+              <VoicePreview id={v.id} />
+            </div>
           ))}
         </div>
         <div>
@@ -881,5 +887,42 @@ function RenderStep({ d, cfg, tracks, running, busy, start, patch, download }: {
         )}
       </section>
     </div>
+  );
+}
+
+let currentPreview: HTMLAudioElement | null = null;
+function VoicePreview({ id }: { id: string }) {
+  const toast = useToast();
+  const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const audio = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => () => audio.current?.pause(), []);
+  const play = async () => {
+    if (state === 'playing') {
+      audio.current?.pause();
+      setState('idle');
+      return;
+    }
+    setState('loading');
+    try {
+      if (!audio.current) {
+        const r = await api<{ url: string }>(`/voices/${encodeURIComponent(id)}/sample`);
+        audio.current = new Audio(mediaUrl(r.url));
+        audio.current.onended = () => setState('idle');
+        audio.current.onpause = () => setState('idle');
+      }
+      if (currentPreview && currentPreview !== audio.current) currentPreview.pause();
+      currentPreview = audio.current;
+      audio.current.currentTime = 0;
+      await audio.current.play();
+      setState('playing');
+    } catch (e: any) {
+      toast('error', e.message || 'Could not play sample');
+      setState('idle');
+    }
+  };
+  return (
+    <button type="button" onClick={play} className="btn btn-secondary !p-2 shrink-0" aria-label={state === 'playing' ? 'Stop sample' : 'Play voice sample'} title="နမူနာ နားထောင်ရန်">
+      {state === 'loading' ? <Spinner /> : state === 'playing' ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+    </button>
   );
 }

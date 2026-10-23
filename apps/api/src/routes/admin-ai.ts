@@ -23,6 +23,7 @@ import {
   getRouting,
   listActiveModels,
   PROVIDER_DEFAULTS,
+  GEMINI_MY_VOICES,
   EMPTY_ROUTING,
   type AiRouting,
   type Prisma,
@@ -46,8 +47,11 @@ export const MODEL_PRESETS: Record<Kind, Array<{ kind: 'CHAT' | 'TTS_VOICE' | 'S
     { kind: 'TTS_VOICE', modelId: 'gpt-4o-mini-tts:nova', displayName: 'OpenAI Nova (multilingual)', unitUsdPer1M: 15 },
   ],
   GEMINI: [
-    { kind: 'CHAT', modelId: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportsVision: true, inputUsdPer1M: 0.3, outputUsdPer1M: 2.5, description: 'Great value, long context' },
-    { kind: 'CHAT', modelId: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', supportsVision: true, inputUsdPer1M: 1.25, outputUsdPer1M: 10, description: 'Best quality Burmese scripts' },
+    { kind: 'CHAT', modelId: 'gemini-3.5-flash', displayName: 'Gemini 3.5 Flash', supportsVision: true, inputUsdPer1M: 0.3, outputUsdPer1M: 2.5, description: 'Fast, strong vision + natural Burmese scripts' },
+    { kind: 'CHAT', modelId: 'gemini-3.1-pro-preview', displayName: 'Gemini 3.1 Pro', supportsVision: true, inputUsdPer1M: 1.25, outputUsdPer1M: 10, description: 'Best quality storytelling (slower)' },
+    { kind: 'CHAT', modelId: 'gemini-3.1-flash-lite', displayName: 'Gemini 3.1 Flash-Lite', supportsVision: true, inputUsdPer1M: 0.1, outputUsdPer1M: 0.4, description: 'Cheapest, quick drafts' },
+    { kind: 'STT', modelId: 'gemini-3.1-flash-lite', displayName: 'Gemini dialogue transcription', unitUsdPer1M: 0.002, description: 'Transcribes original dialogue (any language)' },
+    ...GEMINI_MY_VOICES.map((v) => ({ kind: 'TTS_VOICE' as const, modelId: `gemini-3.1-flash-tts-preview:${v.voice}`, displayName: v.label, unitUsdPer1M: 20, description: v.description })),
   ],
   ANTHROPIC: [
     { kind: 'CHAT', modelId: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5', supportsVision: true, inputUsdPer1M: 3, outputUsdPer1M: 15, description: 'Excellent storytelling' },
@@ -207,6 +211,32 @@ adminAiRoutes.post('/providers/:id/test', async (c) => {
   return c.json({ ok, message, provider: publicProvider(u) });
 });
 
+/** Add the recommended models for this provider (skips ones already added). */
+adminAiRoutes.post('/providers/:id/presets', async (c) => {
+  const admin = c.get('user');
+  const p = await loadProvider(c.req.param('id'));
+  const b = await body(c, z.object({ kinds: z.array(ModelKind).optional() }).default({}));
+  const presets = MODEL_PRESETS[p.kind].filter((m) => !b.kinds || b.kinds.includes(m.kind));
+  const existing = await prisma.aiModel.count({ where: { providerId: p.id } });
+  const r = await prisma.aiModel.createMany({
+    data: presets.map((m, i) => ({ providerId: p.id, ...m, sortOrder: existing + i, userSelectable: m.kind === 'CHAT' })),
+    skipDuplicates: true,
+  });
+  // If there is no default voice yet (or only the dev voice), use the first new neural voice.
+  const routing = await getRouting();
+  const firstVoice = await prisma.aiModel.findFirst({ where: { providerId: p.id, kind: 'TTS_VOICE', enabled: true }, orderBy: { sortOrder: 'asc' } });
+  if (firstVoice) {
+    const cur = routing.defaultVoice ? await prisma.aiModel.findUnique({ where: { id: routing.defaultVoice }, include: { provider: true } }) : null;
+    if (!cur || cur.provider.kind === 'ESPEAK') {
+      const next = { ...routing, defaultVoice: firstVoice.id };
+      await prisma.systemSetting.upsert({ where: { key: 'aiRouting' }, create: { key: 'aiRouting', value: next as any }, update: { value: next as any } });
+    }
+  }
+  invalidateAiCache();
+  await audit(c, admin.id, 'admin.ai.presets.add', 'aiProvider', p.id, { added: r.count });
+  return c.json({ added: r.count });
+});
+
 adminAiRoutes.get('/providers/:id/discover', async (c) => {
   const p = await loadProvider(c.req.param('id'));
   try {
@@ -310,7 +340,7 @@ adminAiRoutes.post('/models/:id/test', async (c) => {
           { role: 'system', content: 'Reply with JSON only.' },
           { role: 'user', content: 'Return {"ok":true,"greeting":"<a one-sentence Burmese greeting in Myanmar Unicode>"}' },
         ],
-        { json: m.jsonMode, maxTokens: 200, timeoutMs: 45_000 },
+        { json: m.jsonMode, maxTokens: 2048, timeoutMs: 60_000 },
       );
       return c.json({ ok: true, ms: Date.now() - t0, output: r.text.slice(0, 400), usage: { input: r.inputTokens, output: r.outputTokens } });
     }

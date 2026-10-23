@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
-import { KeyRound, Plus, Trash2, PlugZap, Search, CheckCircle2, AlertTriangle, Play, Save, Cpu, Mic, Eye, Route, Power, ExternalLink } from 'lucide-react';
+import { KeyRound, Plus, Trash2, PlugZap, Search, CheckCircle2, AlertTriangle, Play, Save, Cpu, Mic, Eye, Route, Power, ExternalLink, Sparkles } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/providers';
 import { ErrorState, Modal, PageLoader, Spinner } from '@/components/ui';
@@ -116,6 +116,12 @@ export function AiModelsTab() {
         <button className="btn btn-primary shrink-0" onClick={() => setAddProv(true)}><Plus className="w-4 h-4" /> Add provider key</button>
       </div>
 
+      {!models.some((m) => m.kind === 'TTS_VOICE' && m.enabled && m.provider.kind !== 'ESPEAK') && providers.some((p) => p.kind === 'GEMINI') && (
+        <div className="card p-4 border-amber-500/40 bg-amber-500/5 text-sm flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <p><b>No natural Myanmar voice yet.</b> Your Gemini key can also speak Burmese — no Azure key needed. Click <b>Recommended</b> on the Gemini card to add 8 Burmese voices and dialogue transcription.</p>
+        </div>
+      )}
+
       {/* Providers */}
       <section className="space-y-3">
         <h3 className="font-semibold">Providers</h3>
@@ -147,6 +153,16 @@ export function AiModelsTab() {
                   {busy === `tp:${p.id}` ? <Spinner /> : <PlugZap className="w-3.5 h-3.5" />} Test key
                 </button>
                 <button className="btn btn-secondary !py-1.5 !px-2.5 text-xs" onClick={() => setAddModelFor(p)}><Plus className="w-3.5 h-3.5" /> Model</button>
+                {(catalog.providers.find((x) => x.kind === p.kind)?.presets.length ?? 0) > 0 && (
+                  <button
+                    className="btn btn-secondary !py-1.5 !px-2.5 text-xs"
+                    disabled={busy === `pr:${p.id}`}
+                    title="Add the recommended chat models, Burmese voices and speech-to-text for this provider"
+                    onClick={() => act(`pr:${p.id}`, async () => { const r = await api<{ added: number }>(`/admin/ai/providers/${p.id}/presets`, { method: 'POST', body: {} }); toast('success', r.added ? `${r.added} recommended model(s)/voice(s) added` : 'All recommended models are already added'); })}
+                  >
+                    {busy === `pr:${p.id}` ? <Spinner /> : <Sparkles className="w-3.5 h-3.5" />} Recommended
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary !py-1.5 !px-2.5 text-xs"
                   onClick={async () => {

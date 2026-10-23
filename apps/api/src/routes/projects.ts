@@ -157,7 +157,12 @@ projectRoutes.post('/', rateLimit({ name: 'project-create', limit: 60, windowSec
 
 projectRoutes.get('/:id', async (c) => {
   const user = c.get('user');
-  const p = await ownProject(user.id, c.req.param('id'));
+  let p = await ownProject(user.id, c.req.param('id'));
+  // Move projects off a voice that is no longer offered (e.g. dev voice after natural voices were added).
+  if (!(await isValidVoice(p.voiceName))) {
+    const def = await defaultVoice();
+    if (def && def !== p.voiceName && (await isValidVoice(def))) p = await prisma.project.update({ where: { id: p.id }, data: { voiceName: def } });
+  }
   const [segments, subtitles, jobs, source, output, thumb] = await Promise.all([
     prisma.scriptSegment.findMany({ where: { projectId: p.id }, orderBy: { idx: 'asc' } }),
     prisma.subtitle.findMany({ where: { projectId: p.id }, orderBy: { idx: 'asc' } }),

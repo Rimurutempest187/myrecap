@@ -12,6 +12,7 @@ let user = '';
 let server: http.Server;
 let base = '';
 const hits: Record<string, number> = {};
+const geminiCalls: string[] = [];
 let savedRouting: unknown = null;
 const providerIds: string[] = [];
 
@@ -33,6 +34,18 @@ beforeAll(async () => {
     const kind = req.url!.split('/')[1];
     hits[kind] = (hits[kind] ?? 0) + 1;
     if (kind === 'bad') { res.writeHead(503); return res.end('overloaded'); }
+    if (kind === 'gem') {
+      // Fake Gemini native TTS: first TTS model is over quota, the fallback returns 1s of 24 kHz PCM.
+      geminiCalls.push(req.url!);
+      if (req.url!.includes('gemini-3.1-flash-tts-preview')) {
+        res.writeHead(429, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { code: 429, message: 'quota per day', details: [{ retryDelay: '3600s' }] } }));
+      }
+      const pcm = Buffer.alloc(48000);
+      for (let i = 0; i < 24000; i++) pcm.writeInt16LE(Math.round(Math.sin((i / 24000) * 2 * Math.PI * 220) * 8000), i * 2);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: pcm.toString('base64') } }] } }] }));
+    }
     if (kind === 'auth' && req.headers.authorization !== 'Bearer sk-correct-key-123') { res.writeHead(401); return res.end('bad key'); }
     if (req.url!.endsWith('/models')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ data: [{ id: 'mock-a' }, { id: 'mock-b' }] })); }
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -149,6 +162,26 @@ describe('admin AI providers & model routing', () => {
     invalidateAiCache();
     expect((await call('GET', '/api/config')).json.aiModels).toHaveLength(0);
     expect((await call('PATCH', `/api/projects/${p.json.project.id}`, { cookie: user, body: { analysisModelId: goodModel } })).status).toBe(400);
+  });
+
+  it('speaks Burmese with Gemini TTS (no Azure) and fails over across Gemini TTS models', async () => {
+    const g = await call('POST', '/api/admin/ai/providers', { cookie: admin, body: { name: `Gem ${uid}`, kind: 'GEMINI', apiKey: 'AIza-test-key-0000', baseUrl: `${base}/gem/v1beta/openai` } });
+    expect(g.status).toBe(201);
+    providerIds.push(g.json.provider.id);
+    const pr = await call('POST', `/api/admin/ai/providers/${g.json.provider.id}/presets`, { cookie: admin, body: { kinds: ['TTS_VOICE'] } });
+    expect(pr.json.added).toBe(8);
+    const voices = (await call('GET', '/api/admin/ai/models', { cookie: admin })).json.items.filter((m: any) => m.providerId === g.json.provider.id);
+    const kore = voices.find((v: any) => v.modelId.endsWith(':Kore'));
+    const t = await call('POST', `/api/admin/ai/models/${kore.id}/test`, { cookie: admin });
+    expect(t.json.ok).toBe(true);
+    expect(t.json.audio).toMatch(/^data:audio\/mpeg;base64,/);
+    expect(geminiCalls[0]).toContain('gemini-3.1-flash-tts-preview');
+    expect(geminiCalls.some((u) => u.includes('gemini-2.5-flash-preview-tts'))).toBe(true);
+    // Public config now offers the Gemini voices
+    invalidateAiCache();
+    const cfg = await call('GET', '/api/config');
+    expect(cfg.json.voices.some((v: any) => v.id === kore.id)).toBe(true);
+    expect(cfg.json.voices.some((v: any) => v.engine === 'ESPEAK')).toBe(false);
   });
 
   it('clears project selections when a model is deleted', async () => {

@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
-import { prisma, availableVoices, defaultVoice, listActiveModels, getRouting, TRANSITIONS, CREDIT_RULES, storage, env, badRequest } from '@recap/core';
+import { createHash } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { prisma, availableVoices, voiceModel, testVoice, VOICE_SAMPLE_TEXT, keys, logger, notFound, defaultVoice, listActiveModels, getRouting, TRANSITIONS, CREDIT_RULES, storage, env, badRequest } from '@recap/core';
 import { body, z } from '../lib/validate.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { clientIp } from '../lib/auth.js';
@@ -35,6 +39,39 @@ metaRoutes.get('/config', async (c) => {
     paymentsEnabled: !!env().STRIPE_SECRET_KEY,
     allowedMime: env().ALLOWED_VIDEO_MIME.split(','),
   });
+});
+
+/** Short Burmese sample for a voice (generated once, cached in storage) so users can hear voices before choosing. */
+const sampleInflight = new Map<string, Promise<void>>();
+metaRoutes.get('/voices/:id/sample', rateLimit({ name: 'voice-sample', limit: 40, windowSec: 600 }), async (c) => {
+  const v = await voiceModel(c.req.param('id'));
+  if (!v) throw notFound('Voice not found');
+  const hash = createHash('sha256').update(`${v.provider.id}|${v.modelId}|${JSON.stringify(v.config)}|${VOICE_SAMPLE_TEXT}`).digest('hex').slice(0, 16);
+  const key = keys.voiceSample(v.id.replace(/[^a-zA-Z0-9_-]/g, '_'), hash);
+  const st = storage();
+  if (!(await st.head(key))) {
+    let job = sampleInflight.get(key);
+    if (!job) {
+      job = (async () => {
+        const dir = await mkdtemp(path.join(os.tmpdir(), 'vs-'));
+        try {
+          const f = path.join(dir, 's.mp3');
+          await testVoice(v, f);
+          await st.uploadFile(key, f, 'audio/mpeg');
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      })().finally(() => sampleInflight.delete(key));
+      sampleInflight.set(key, job);
+    }
+    try {
+      await job;
+    } catch (e: any) {
+      logger.warn({ err: e?.message, voice: v.id }, 'voice sample failed');
+      return c.json({ error: { code: 'SAMPLE_FAILED', message: 'Could not generate a sample right now. Please try again shortly.' } }, 503);
+    }
+  }
+  return c.json({ url: await st.presignDownload(key, { inline: true, ttlSec: 3600 }) });
 });
 
 metaRoutes.get('/music', async (c) => {

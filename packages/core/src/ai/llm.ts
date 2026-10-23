@@ -123,11 +123,12 @@ export async function transcribe(
 
 /** Whisper-compatible transcription with a registry model. */
 export async function transcribeWith(
-  m: { modelId: string; provider: { baseUrl: string; apiKey: string | null; name: string } },
+  m: { modelId: string; provider: { baseUrl: string; apiKey: string | null; name: string; kind?: string } },
   fileName: string,
   fileBytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<{ segments: TranscriptSegment[]; language?: string }> {
+  if (m.provider.kind === 'GEMINI') return geminiTranscribe(m, fileBytes, signal);
   const form = new FormData();
   form.append('file', new Blob([fileBytes as unknown as BlobPart], { type: 'audio/mpeg' }), fileName);
   form.append('model', m.modelId);
@@ -143,5 +144,50 @@ export async function transcribeWith(
   return {
     segments: (data.segments ?? []).map((s: any) => ({ start: Number(s.start), end: Number(s.end), text: String(s.text ?? '').trim() })),
     language: data.language,
+  };
+}
+
+/** Gemini audio understanding as speech-to-text: returns timestamped segments (JSON). */
+async function geminiTranscribe(
+  m: { modelId: string; provider: { baseUrl: string; apiKey: string | null; name: string } },
+  fileBytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<{ segments: TranscriptSegment[]; language?: string }> {
+  if (!m.provider.apiKey) throw new LlmError(`${m.provider.name}: API key is not set`, undefined, false);
+  if (fileBytes.length > 19 * 1024 * 1024) throw new LlmError('Audio too large for inline Gemini transcription', undefined, false);
+  const base = (m.provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '').replace(/\/openai$/, '');
+  const res = await fetch(`${base}/models/${encodeURIComponent(m.modelId)}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': m.provider.apiKey },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inline_data: { mime_type: 'audio/mpeg', data: Buffer.from(fileBytes).toString('base64') } },
+            {
+              text: 'Transcribe the spoken dialogue in this audio in its original language. Ignore music and sound effects. Return JSON only: {"language":"<ISO code>","segments":[{"start":<seconds>,"end":<seconds>,"text":"..."}]} with one segment per sentence or line of dialogue, in order. If there is no speech return {"segments":[]}.',
+            },
+          ],
+        },
+      ],
+      generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+    }),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
+  });
+  const raw = await res.text();
+  if (!res.ok) throw new LlmError(`${m.provider.name} STT HTTP ${res.status}: ${raw.slice(0, 300)}`, res.status, res.status >= 500 || res.status === 429);
+  const data = JSON.parse(raw);
+  const text: string = (data?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? '').join('');
+  const parsed = parseJsonLoose<{ language?: string; segments?: Array<{ start: unknown; end: unknown; text: unknown }> }>(text || '{}');
+  const num = (v: unknown) => {
+    if (typeof v === 'number') return v;
+    const s = String(v ?? '0');
+    if (s.includes(':')) return s.split(':').reduce((a, x) => a * 60 + Number(x), 0);
+    return Number(s) || 0;
+  };
+  return {
+    language: parsed.language,
+    segments: (parsed.segments ?? []).map((s) => ({ start: num(s.start), end: num(s.end), text: String(s.text ?? '').trim() })).filter((s) => s.text),
   };
 }

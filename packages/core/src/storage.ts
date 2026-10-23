@@ -244,6 +244,7 @@ export const keys = {
   thumb: (userId: string, projectId: string, assetId: string) => `users/${userId}/projects/${projectId}/thumbs/${assetId}.jpg`,
   projectPrefix: (userId: string, projectId: string) => `users/${userId}/projects/${projectId}/`,
   music: (id: string) => `library/music/${id}.mp3`,
+  voiceSample: (voiceId: string, hash: string) => `library/voice-samples/${voiceId}-${hash}.mp3`,
 };
 
 export { Readable };

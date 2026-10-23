@@ -159,7 +159,7 @@ export async function modelsForTask(task: AiTask, preferredId?: string | null): 
 export async function listVoices() {
   const { models, routing } = await load();
   const voices = models.filter((m) => m.kind === 'TTS_VOICE');
-  const def = voices.find((v) => v.id === routing.defaultVoice) ?? voices[0] ?? null;
+  const def = voices.find((v) => v.id === routing.defaultVoice) ?? voices.find((v) => v.provider.kind !== 'ESPEAK') ?? voices[0] ?? null;
   return { voices, defaultVoiceId: def?.id ?? null };
 }
 
