@@ -22,6 +22,7 @@ interface Project {
   subtitleStyle: { fontSize?: number; primaryColor?: string; outlineColor?: string; boxed?: boolean; position?: string } | null; subtitlesEnabled: boolean;
   analysis: { aiTitle?: string; summary?: string; sceneCount?: number; framesAnalyzed?: number; models?: { task: string; model: string; provider: string }[] } | null; lastError: string | null;
   analysisModelId: string | null;
+  autoPilot: boolean;
 }
 interface Estimate { credits: number; usd: number; [k: string]: any }
 interface Detail {
@@ -112,7 +113,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             if (!r) return;
             if (ev.status === 'COMPLETED') {
               const next: Record<string, StepKey> = { PROBE: 'analyze', ANALYZE: 'script', VOICEOVER: 'subs', RENDER: 'render' };
-              if (next[ev.type]) setStep(next[ev.type]);
+              if (r.project.autoPilot && ev.type !== 'RENDER') setStep(next[ev.type] === 'subs' ? 'voice' : next[ev.type]);
+              else if (next[ev.type]) setStep(next[ev.type]);
               toast('success', `${JOB_LABEL[ev.type]} finished`);
             } else if (ev.status === 'FAILED') toast('error', `${JOB_LABEL[ev.type]} failed: ${ev.error ?? 'unknown error'}`);
           });
@@ -147,6 +149,22 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     },
     [id, toast],
   );
+
+  const autoPilot = async (enabled: boolean) => {
+    if (enabled && dirtyScript && !(await saveScript())) return;
+    if (enabled && dirtySubs && !(await saveSubs())) return;
+    setBusy('auto');
+    try {
+      const r = await api<{ started: string | null }>(`/projects/${id}/autopilot`, { body: { requestId: newRequestId(), enabled } });
+      toast(enabled ? 'success' : 'info', enabled ? (r.started ? 'Auto-Pilot started — sit back, we will finish the whole recap for you.' : 'Auto-Pilot is on — it starts as soon as the video is validated.') : 'Auto-Pilot stopped. The current step will finish.');
+      await load();
+      refreshUser();
+    } catch (e: any) {
+      toast('error', e.message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const startJob = async (kind: 'analyze' | 'voiceover' | 'render') => {
     if (kind !== 'analyze' && dirtyScript && !(await saveScript())) return;
@@ -316,6 +334,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         })}
       </nav>
 
+      {/* Auto-Pilot */}
+      <AutoPilotBar d={d} running={running} busy={busy === 'auto'} onToggle={autoPilot} liveType={running ? liveJob?.type ?? null : null} />
+
       {/* live job panel */}
       {running && liveJob && (
         <section className="card p-4 border-brand-500/50" aria-live="polite">
@@ -339,6 +360,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <p className="text-xs muted">{failedJob.error}. Reserved credits were refunded.</p>
           </div>
           {failedJob.type !== 'PROBE' && <button className="btn btn-secondary text-xs" onClick={() => retryJob(failedJob.id)}><RotateCcw className="w-4 h-4" /> Retry</button>}
+        </section>
+      )}
+
+      {!running && !p.autoPilot && p.lastError?.startsWith('Auto-Pilot paused') && (
+        <section className="card p-4 border-amber-500/50 flex items-start gap-3 text-sm" role="status">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+          <p>{p.lastError}</p>
         </section>
       )}
 
@@ -924,5 +952,59 @@ function VoicePreview({ id }: { id: string }) {
     <button type="button" onClick={play} className="btn btn-secondary !p-2 shrink-0" aria-label={state === 'playing' ? 'Stop sample' : 'Play voice sample'} title="နမူနာ နားထောင်ရန်">
       {state === 'loading' ? <Spinner /> : state === 'playing' ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
     </button>
+  );
+}
+
+const PIPE = [
+  { t: 'PROBE', l: 'စစ်ဆေး' , e: 'Validate' },
+  { t: 'ANALYZE', l: 'AI ခွဲခြမ်း', e: 'AI analysis' },
+  { t: 'VOICEOVER', l: 'မြန်မာအသံ', e: 'Voice' },
+  { t: 'RENDER', l: 'ဗီဒီယိုထုတ်', e: 'Render' },
+] as const;
+
+function AutoPilotBar({ d, running, busy, onToggle, liveType }: { d: Detail; running: boolean; busy: boolean; onToggle: (on: boolean) => void; liveType: string | null }) {
+  const p = d.project;
+  const done = p.status === 'COMPLETED';
+  const hasSource = !!d.source;
+  if (!hasSource) return null;
+  const doneIdx = { DRAFT: -1, UPLOADED: 0, ANALYZING: 0, SCRIPT_READY: 1, VOICING: 1, VOICED: 2, RENDERING: 2, COMPLETED: 3, FAILED: -1 }[p.status] ?? -1;
+  if (!p.autoPilot) {
+    if (done || running) return null;
+    return (
+      <section className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3 bg-gradient-to-r from-brand-500/10 to-accent-500/10 border-brand-500/30">
+        <Sparkles className="w-6 h-6 text-brand-500 shrink-0" />
+        <div className="flex-1">
+          <p className="font-semibold text-sm">One-click Auto-Pilot</p>
+          <p className="text-xs muted">AI analysis → မြန်မာ script → မြန်မာအသံ → subtitles → MP4 ကို အလိုအလျောက် ဆက်တိုက်လုပ်ပေးမယ်။ ပြီးမှ လိုသလို ပြင်ပြီး ပြန် render လုပ်နိုင်ပါတယ်။</p>
+        </div>
+        <button className="btn btn-primary" disabled={busy || d.source?.status === 'REJECTED'} onClick={() => onToggle(true)}>
+          {busy ? <Spinner /> : <Sparkles className="w-4 h-4" />} Auto-generate recap
+        </button>
+      </section>
+    );
+  }
+  return (
+    <section className="card p-4 border-brand-500/40" aria-live="polite">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Sparkles className="w-5 h-5 text-brand-500" />
+        <p className="font-semibold text-sm flex-1">{done ? 'Auto-Pilot finished — your recap is ready!' : 'Auto-Pilot is creating your recap…'}</p>
+        {!done && <button className="btn btn-ghost text-xs" disabled={busy} onClick={() => onToggle(false)}>Stop Auto-Pilot</button>}
+      </div>
+      <ol className="mt-3 grid grid-cols-4 gap-2">
+        {PIPE.map((s, i) => {
+          const isDone = i <= doneIdx || done;
+          const isNow = liveType === s.t;
+          return (
+            <li key={s.t} className={clsx('rounded-xl px-2 py-2 text-center text-xs border', isDone ? 'border-emerald-500/40 bg-emerald-500/10' : isNow ? 'border-brand-500 bg-brand-500/10' : 'border-[var(--border)] opacity-60')}>
+              <div className="flex items-center justify-center gap-1 font-medium">
+                {isDone ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : isNow ? <Spinner className="w-3.5 h-3.5" /> : null}
+                <span className="my-text">{s.l}</span>
+              </div>
+              <span className="muted hidden sm:block">{s.e}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

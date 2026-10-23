@@ -30,7 +30,7 @@ export async function finalizeCancelled(jobId: string) {
   let projectStatus: ProjectStatus | undefined;
   if (job.projectId) {
     projectStatus = await projectFallback(job.projectId, job.type);
-    await prisma.project.update({ where: { id: job.projectId }, data: { status: projectStatus } });
+    await prisma.project.update({ where: { id: job.projectId }, data: { status: projectStatus, autoPilot: false } });
   }
   await publishJobEvent(job.userId, {
     jobId,
@@ -56,7 +56,7 @@ export async function finalizeFailed(jobId: string, error: string) {
   if (job.projectId) {
     projectStatus = await projectFallback(job.projectId, job.type);
     if (!(await prisma.scriptSegment.count({ where: { projectId: job.projectId } })) && job.type === 'ANALYZE') projectStatus = 'FAILED';
-    await prisma.project.update({ where: { id: job.projectId }, data: { status: projectStatus, lastError: error.slice(0, 1000) } });
+    await prisma.project.update({ where: { id: job.projectId }, data: { status: projectStatus, lastError: error.slice(0, 1000), autoPilot: false } });
   }
   await publishJobEvent(job.userId, {
     jobId,

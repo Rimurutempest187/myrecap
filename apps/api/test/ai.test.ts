@@ -191,3 +191,32 @@ describe('admin AI providers & model routing', () => {
     expect((await prisma.project.findUniqueOrThrow({ where: { id: p!.id } })).analysisModelId).toBeNull();
   });
 });
+
+describe('auto-pilot', () => {
+  it('chains the next pipeline step after a job completes and stops on failure', async () => {
+    const { continueAutoPilot, nextPipelineStep } = await import('@recap/core');
+    const u = await prisma.user.findFirstOrThrow({ where: { email: `usr-${uid}@test.dev` } });
+    const asset = await prisma.asset.create({ data: { userId: u.id, kind: 'SOURCE_VIDEO', status: 'READY', storageKey: `test/${uid}.mp4`, mimeType: 'video/mp4', durationSec: 120, hasAudio: false } });
+    const p = await prisma.project.create({ data: { userId: u.id, title: 'auto', recapType: 'MOVIE', sourceAssetId: asset.id, autoPilot: true, status: 'UPLOADED' } });
+    expect(await nextPipelineStep(p.id)).toBe('ANALYZE');
+    const probe = await prisma.job.create({ data: { userId: u.id, projectId: p.id, type: 'PROBE', status: 'COMPLETED', idempotencyKey: `probe-${uid}` } });
+    const next = await continueAutoPilot(probe.id);
+    const analyze = await prisma.job.findFirst({ where: { projectId: p.id, type: 'ANALYZE' } });
+    if (next === 'ANALYZE') {
+      expect(analyze).not.toBeNull();
+      expect(analyze!.creditsReserved).toBeGreaterThan(0);
+      // idempotent: replaying the same completion does not create a second job
+      await continueAutoPilot(probe.id);
+      expect(await prisma.job.count({ where: { projectId: p.id, type: 'ANALYZE' } })).toBe(1);
+      await jobQueue().remove(analyze!.id).catch(() => undefined);
+      const { finalizeFailed } = await import('@recap/core');
+      await finalizeFailed(analyze!.id, 'test failure');
+      expect((await prisma.project.findUniqueOrThrow({ where: { id: p.id } })).autoPilot).toBe(false);
+    } else {
+      // No AI model available in this environment → chain pauses with a clear message
+      const fresh = await prisma.project.findUniqueOrThrow({ where: { id: p.id } });
+      expect(fresh.autoPilot).toBe(false);
+      expect(fresh.lastError).toMatch(/Auto-Pilot paused/);
+    }
+  });
+});

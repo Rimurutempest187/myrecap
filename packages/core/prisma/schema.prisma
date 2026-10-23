@@ -299,6 +299,7 @@ model Project {
   subtitlesEnabled    Boolean       @default(true)
   analysis            Json?
   analysisModelId     String?
+  autoPilot           Boolean       @default(false) // run analyze → voice → render automatically
   copyrightConfirmedAt DateTime?
   copyrightIp         String?
   lastError           String?

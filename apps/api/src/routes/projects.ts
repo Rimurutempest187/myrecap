@@ -21,6 +21,7 @@ import {
   getModel,
   getRouting,
   modelsForTask,
+  startAutoPilot,
   TRANSITIONS,
   MY_CHARS_PER_SEC,
   keys,
@@ -64,6 +65,7 @@ const settingsSchema = z.object({
   subtitleStyle: subtitleStyleSchema.nullable().optional(),
   subtitlesEnabled: z.boolean().optional(),
   analysisModelId: z.string().max(80).nullable().optional(),
+  autoPilot: z.boolean().optional(),
 });
 
 const BUSY = ['ANALYZING', 'VOICING', 'RENDERING'];
@@ -417,6 +419,21 @@ projectRoutes.post('/:id/render', jobLimiter, async (c) => {
     input: { maxHeight: plan.maxOutputHeight, watermark: plan.watermark },
   });
   return c.json({ job: publicJob(job), created }, created ? 202 : 200);
+});
+
+/** One-click: run every remaining step (analyze → voice → render) automatically. */
+projectRoutes.post('/:id/autopilot', jobLimiter, async (c) => {
+  const user = c.get('user');
+  const p = await ownProject(user.id, c.req.param('id'));
+  const b = await body(c, z.object({ requestId: z.string().min(8).max(64), enabled: z.boolean().default(true) }));
+  if (!b.enabled) {
+    await prisma.project.update({ where: { id: p.id }, data: { autoPilot: false } });
+    return c.json({ autoPilot: false, started: null });
+  }
+  if (p.recapType === 'CUSTOM' && !p.customPrompt?.trim()) throw badRequest('Custom recap requires instructions');
+  const started = await startAutoPilot(p.id, b.requestId);
+  await audit(c, user.id, 'project.autopilot', 'project', p.id, { started });
+  return c.json({ autoPilot: true, started }, 202);
 });
 
 projectRoutes.get('/:id/download', async (c) => {

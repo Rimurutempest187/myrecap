@@ -15,6 +15,7 @@ import {
   PermanentJobError,
   JobCancelledError,
   reportError,
+  continueAutoPilot,
   type JobPayload,
 } from '@recap/core';
 import { createServer } from 'node:http';
@@ -70,6 +71,7 @@ async function handle(bj: BullJob<JobPayload>) {
     });
     await publishJobEvent(job.userId, { jobId: job.id, projectId: job.projectId, type: job.type, status: 'COMPLETED', progress: 100, stage: 'Done', projectStatus: out.projectStatus }).catch(() => undefined);
     logger.info({ jobId: job.id, type: job.type, charged, costUsd: ctx.costUsd }, 'job completed');
+    await continueAutoPilot(job.id).catch((e2) => logger.warn({ err: e2?.message, jobId: job.id }, 'auto-pilot continuation failed'));
     return out.result;
   } catch (err: any) {
     const cancelled = err instanceof JobCancelledError || (ctx.signal.aborted && ctx.signal.reason instanceof JobCancelledError);

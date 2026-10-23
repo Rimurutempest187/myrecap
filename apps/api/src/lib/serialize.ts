@@ -83,6 +83,7 @@ export function publicProject(p: Project) {
     status: p.status,
     voiceName: p.voiceName,
     analysisModelId: p.analysisModelId,
+    autoPilot: p.autoPilot,
     voiceRate: p.voiceRate,
     voicePitch: p.voicePitch,
     originalAudioVolume: p.originalAudioVolume,

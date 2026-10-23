@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { UploadCloud, Swords, Clapperboard, Smartphone, Star, Wand2, FileVideo, X, ShieldAlert } from 'lucide-react';
+import { UploadCloud, Swords, Clapperboard, Smartphone, Star, Wand2, FileVideo, X, ShieldAlert, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 import { api, uploadWithProgress, fmtBytes } from '@/lib/api';
 import { useAuth, useToast } from '@/components/providers';
@@ -28,6 +28,7 @@ export default function NewProject() {
   const [prompt, setPrompt] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [rights, setRights] = useState(false);
+  const [auto, setAuto] = useState(true);
   const [drag, setDrag] = useState(false);
   const [phase, setPhase] = useState<'idle' | 'creating' | 'uploading' | 'finalizing'>('idle');
   const [progress, setProgress] = useState(0);
@@ -60,7 +61,7 @@ export default function NewProject() {
     let projectId: string | null = null;
     try {
       const { project } = await api<{ project: { id: string } }>('/projects', {
-        body: { title: title.trim() || 'Untitled recap', recapType: type, aspectRatio: ratio, targetDurationSec: dur, customPrompt: type === 'CUSTOM' ? prompt : undefined, copyrightConfirmed: true },
+        body: { title: title.trim() || 'Untitled recap', recapType: type, aspectRatio: ratio, targetDurationSec: dur, customPrompt: type === 'CUSTOM' ? prompt : undefined, copyrightConfirmed: true, autoPilot: auto },
       });
       projectId = project.id;
       const up = await api<{ assetId: string; upload: { url: string; headers: Record<string, string> } }>('/uploads', {
@@ -71,7 +72,7 @@ export default function NewProject() {
       await uploadWithProgress(up.upload.url, file, up.upload.headers, setProgress, abortRef.current.signal);
       setPhase('finalizing');
       await api(`/uploads/${up.assetId}/complete`, { body: { projectId } });
-      toast('success', 'Upload complete! Validating your video…');
+      toast('success', auto ? 'Upload complete! Auto-Pilot will create your recap automatically.' : 'Upload complete! Validating your video…');
       router.push(`/projects/${projectId}`);
     } catch (e: any) {
       setError(e.message);
@@ -162,6 +163,16 @@ export default function NewProject() {
         )}
       </section>
 
+      <section className="card p-5">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" className="mt-1 accent-indigo-500" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
+          <span>
+            <span className="font-semibold text-sm flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-brand-500" /> Auto-Pilot — one-click recap</span>
+            <span className="block text-xs muted mt-0.5">Upload ပြီးတာနဲ့ AI ခွဲခြမ်းစိတ်ဖြာ → မြန်မာ script → မြန်မာအသံ → subtitles → MP4 ကို အလိုအလျောက် ဆက်လုပ်ပေးမယ်။ ပြီးရင် script/အသံ/subtitles ကို ပြင်ပြီး ပြန် render လုပ်နိုင်ပါတယ်။ Credits are reserved per step, exactly like manual runs.</span>
+          </span>
+        </label>
+      </section>
+
       <section className="card p-5 space-y-3 border-amber-500/40">
         <div className="flex gap-3">
           <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
@@ -180,7 +191,7 @@ export default function NewProject() {
         <Link href="/dashboard" className="btn btn-secondary">Cancel</Link>
         <button className="btn btn-primary px-6" disabled={!file || !rights || busy || (type === 'CUSTOM' && !prompt.trim())} onClick={submit}>
           {busy && <Spinner />}
-          {phase === 'creating' ? 'Creating project…' : phase === 'uploading' ? 'Uploading…' : phase === 'finalizing' ? 'Finalizing…' : 'Upload & continue'}
+          {phase === 'creating' ? 'Creating project…' : phase === 'uploading' ? 'Uploading…' : phase === 'finalizing' ? 'Finalizing…' : auto ? 'Upload & auto-generate' : 'Upload & continue'}
         </button>
       </div>
     </div>

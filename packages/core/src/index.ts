@@ -21,3 +21,4 @@ export * from './monitoring.js';
 export * from './secrets.js';
 export * from './ai/providers.js';
 export * from './ai/registry.js';
+export * from './autopilot.js';
