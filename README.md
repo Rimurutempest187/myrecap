@@ -19,7 +19,7 @@ Supports **Anime Recap, Movie Recap, Long-to-Shorts, Highlights and Custom Recap
 | **Admin → AI Models & Keys**: per-provider encrypted API keys (OpenAI, Gemini, Claude, OpenRouter, DeepSeek, Groq, custom OpenAI-compatible, Azure Speech, eSpeak), key test, model discovery, per-model pricing & credit multiplier, task routing (vision / script / STT) with ordered fallbacks and automatic failover, default voice, optional user model choice, 30-day usage per model | ✅ Working |
 | Optional dialogue transcription (Whisper API) | ✅ Implemented (optional) |
 | Script editor: narration, timestamps, add/remove/reorder, clip preview | ✅ Working |
-| Myanmar voiceover — Azure Neural `my-MM-NilarNeural` / `my-MM-ThihaNeural`, speed and pitch | ✅ Implemented — needs an Azure Speech key |
+| Myanmar voiceover — **Gemini TTS (8 Burmese voices, same Gemini key)** or Azure Neural `my-MM-*`; speed, pitch, voice preview | ✅ Working (verified end-to-end with Gemini) |
 | Dev voice — eSpeak NG Burmese (local testing only) | ✅ Working |
 | Auto Myanmar subtitles: syllable-safe line breaks, timed to voice, editable text and timing, style, SRT export | ✅ Working |
 | FFmpeg render: per-scene clips, blur-fill or crop, transitions, original-audio ducking, licensed music, loudness normalization, burned-in subtitles, H.264/AAC faststart | ✅ Working |
@@ -152,7 +152,7 @@ Open `https://<DOMAIN>` and log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Change
 
 ### 5.3 Connect AI models (Admin → AI Models & Keys)
 1. **Add provider key** → choose the provider (e.g. Google Gemini), paste the key, keep "Add recommended models" ticked → **Save & test**. The key is encrypted with `SECRETS_KEY` (AES-256-GCM); only a hint like `AIz…9xQ` is ever shown again.
-2. Add a voice provider: **Microsoft Azure AI Speech** (key + region) gives the natural Burmese voices `my-MM-NilarNeural` / `my-MM-ThihaNeural`. Use **Test** on a voice to hear a sample.
+2. **Myanmar voice — a Gemini key is enough (Azure optional).** Click **Recommended** on the Gemini card: it adds 8 natural Burmese Gemini TTS voices (Kore, Charon, Puck, Aoede, Fenrir, Leda, Orus, Sulafat), Gemini dialogue transcription and current chat models. Gemini TTS fails over across `gemini-3.1-flash-tts-preview → 2.5-flash-preview-tts → 3.8-flash-tts → …` when one hits its quota; speed/pitch are applied with FFmpeg and silence is trimmed for tight subtitle timing. Optionally add **Microsoft Azure AI Speech** (key + region) for `my-MM-NilarNeural` / `my-MM-ThihaNeural`. Users can preview every voice (▶) before choosing; the eSpeak dev voice is hidden automatically once a natural voice exists.
 3. Optional: OpenAI or Groq **Whisper** for speech-to-text of original dialogue.
 4. **Task routing**: pick a primary model and fallbacks for *Vision analysis*, *Burmese script writer* and *Speech-to-text*, and the default voice. If the primary fails (rate limit, outage, invalid key, no credit) the next model runs automatically; the job is only retried later if a failure was transient.
 5. Per model: set prices (for provider-cost tracking), a **credit multiplier** (charge more credits for premium models), **User can pick** (shows the model in the project editor) and enable/disable. "Browse" lists every model the key can access.
