@@ -17,6 +17,9 @@ services:
       - media:/data/storage
 
   caddy:
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ORIGIN_ALLOW_EXTRA: ${ORIGIN_ALLOW_EXTRA:-127.0.0.1/32}
     volumes:
       - ./deploy/Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro
       - ./deploy/certs:/certs:ro
