@@ -110,6 +110,30 @@ describe('projects & permissions', () => {
     const res = await app.request(u.pathname + u.search, { method: 'PUT', headers: { 'content-type': 'video/mp4' }, body: '0123456789' });
     expect(res.status).toBe(403);
   });
+  it('accepts chunked uploads (Cloudflare 100 MB limit), resyncs bad offsets and assembles the file', async () => {
+    const data = Buffer.alloc(30_000);
+    for (let i = 0; i < data.length; i++) data[i] = i % 251;
+    const r = await call('POST', '/api/uploads', { cookie: alice.cookie, body: { projectId, filename: 'c.mp4', mimeType: 'video/mp4', sizeBytes: data.length } });
+    expect(r.status).toBe(200);
+    const u = new URL(r.json.upload.url);
+    const put = (offset: number, chunk: Buffer) =>
+      app.request(`${u.pathname}${u.search}&offset=${offset}`, { method: 'PUT', headers: { 'content-type': 'video/mp4', 'content-length': String(chunk.length) }, body: chunk });
+    const a = await put(0, data.subarray(0, 12_000));
+    expect((await a.json()).received).toBe(12_000);
+    // out-of-order chunk → 409 with the expected offset
+    const bad = await put(24_000, data.subarray(24_000));
+    expect(bad.status).toBe(409);
+    expect((await bad.json()).expected).toBe(12_000);
+    await put(12_000, data.subarray(12_000, 24_000));
+    const last = await (await put(24_000, data.subarray(24_000))).json();
+    expect(last).toEqual({ received: 30_000, complete: true });
+    const done = await call('POST', `/api/uploads/${r.json.assetId}/complete`, { cookie: alice.cookie, body: { projectId } });
+    expect(done.status).toBe(200);
+    const { storage } = await import('@recap/core');
+    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: r.json.assetId } });
+    expect((await storage().head(asset.storageKey))?.size).toBe(30_000);
+    await prisma.job.deleteMany({ where: { projectId, type: 'PROBE' } }).catch(() => undefined);
+  });
   it('cannot analyze without a validated video', async () => {
     const r = await call('POST', `/api/projects/${projectId}/analyze`, { cookie: alice.cookie, body: { requestId: 'req-12345678' } });
     expect(r.status).toBe(400);
