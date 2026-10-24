@@ -1,0 +1,20 @@
+# Windows / Docker Desktop override: http://localhost:8080, media in a Docker volume.
+services:
+  api:
+    env_file: .env.local
+    environment:
+      LOCAL_STORAGE_DIR: /data/storage
+    volumes: [media:/data/storage]
+  worker:
+    env_file: .env.local
+    environment:
+      LOCAL_STORAGE_DIR: /data/storage
+    volumes: [workdir:/work, media:/data/storage]
+  caddy:
+    ports: !override ["8080:80"]
+    volumes:
+      - ./windows/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  media:

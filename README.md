@@ -129,6 +129,7 @@ npm test          # core unit tests, API integration tests (real Postgres + Redi
 ## 5. Production deployment (Docker)
 
 > **Own VPS + Cloudflare (step-by-step, one-command installer):** see [DEPLOY.md](DEPLOY.md) and `deploy/install.sh`.
+> **From Windows PowerShell (easiest):** see [windows/README-WINDOWS.md](windows/README-WINDOWS.md) — `.\windows\deploy-vps.ps1`.
 
 
 Recommended host: a Linux VM (Ubuntu 22.04+) with **≥ 4 vCPU / 8 GB RAM** for one API and two workers. Rendering is CPU-bound; add worker containers or hosts to scale.

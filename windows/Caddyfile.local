@@ -1,0 +1,19 @@
+# Local (Windows / Docker Desktop) edge: plain HTTP on :8080
+{
+	admin off
+	auto_https off
+}
+:80 {
+	request_body {
+		max_size 2GB
+	}
+	@api path /api/* /metrics
+	handle @api {
+		reverse_proxy api:4000 {
+			flush_interval -1
+		}
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}

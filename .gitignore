@@ -16,3 +16,12 @@ tmp/
 *.wav
 *.mp3
 !apps/web/public/**
+
+# deployment secrets
+deploy/certs/
+*.pem
+*.key
+*.tsbuildinfo
+backups/
+.env.local
+windows/certs/

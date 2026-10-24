@@ -5,7 +5,9 @@
 name: recapai
 
 x-app-env: &app-env
-  env_file: .env
+  env_file:
+    - path: .env
+      required: false
   environment:
     NODE_ENV: production
     DATABASE_URL: postgresql://${POSTGRES_USER:-recap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-recap}?schema=public
