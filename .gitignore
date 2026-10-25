@@ -25,3 +25,4 @@ deploy/certs/
 backups/
 .env.local
 windows/certs/
+.env.tunnel

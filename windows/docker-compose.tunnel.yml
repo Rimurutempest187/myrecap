@@ -1,0 +1,45 @@
+# Run the full RecapAI stack on a Windows PC (Docker Desktop) and publish it through Cloudflare Tunnel.
+# No router port-forwarding or static IP is needed; Cloudflare provides HTTPS + DDoS protection.
+#   docker compose --env-file .env.tunnel -f docker-compose.yml -f windows/docker-compose.tunnel.yml up -d --build
+services:
+  api:
+    env_file: .env.tunnel
+    environment:
+      LOCAL_STORAGE_DIR: /data/storage
+      TRUST_CLOUDFLARE: "true"
+    volumes: [media:/data/storage]
+
+  worker:
+    env_file: .env.tunnel
+    environment:
+      LOCAL_STORAGE_DIR: /data/storage
+      TRUST_CLOUDFLARE: "true"
+    volumes: [workdir:/work, media:/data/storage]
+
+  caddy:
+    # Only reachable from this PC (and through the tunnel) — not from the local network.
+    ports: !override ["127.0.0.1:8080:80"]
+    volumes:
+      - ./windows/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # Named tunnel (your domain). The token comes from .env.tunnel (created by windows/run-tunnel.ps1).
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?TUNNEL_TOKEN missing - run windows/run-tunnel.ps1}
+    depends_on: [caddy]
+
+  # Fallback without a domain: free temporary https://*.trycloudflare.com URL (profile "quick").
+  cloudflared-quick:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["quick"]
+    command: ["tunnel", "--no-autoupdate", "--url", "http://caddy:80"]
+    depends_on: [caddy]
+
+volumes:
+  media:
