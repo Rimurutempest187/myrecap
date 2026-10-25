@@ -1,5 +1,8 @@
 # RecapAI — VPS + Cloudflare Deployment Guide
 
+> **No VPS yet?** Run it from your Windows PC with Docker Desktop + Cloudflare Tunnel:
+> `.\windows\run-tunnel.ps1` — see [windows/README-WINDOWS.md](windows/README-WINDOWS.md) (Option A).
+
 **Server:** `169.58.6.42`  **Domain:** `myrecap.pinlonmail.com`  **Proxy/SSL:** Cloudflare
 
 ```

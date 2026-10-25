@@ -46,9 +46,14 @@ jobRoutes.get('/events', async (c) => {
   });
   // Set after streamSSE (it overwrites Cache-Control). no-transform stops Cloudflare from compressing
   // (= buffering) the stream; X-Accel-Buffering disables nginx-style proxy buffering.
-  res.headers.set('Cache-Control', 'no-cache, no-transform');
-  res.headers.set('X-Accel-Buffering', 'no');
-  return res;
+  // Hono merges the context's pending headers into the returned Response, so update them there too.
+  c.header('Cache-Control', 'no-cache, no-transform');
+  c.header('X-Accel-Buffering', 'no');
+  const headers = new Headers(res.headers);
+  headers.set('Cache-Control', 'no-cache, no-transform');
+  headers.set('X-Accel-Buffering', 'no');
+  headers.delete('Content-Length');
+  return new Response(res.body, { status: 200, headers });
 });
 
 jobRoutes.get('/:id', async (c) => {
