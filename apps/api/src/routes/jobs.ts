@@ -24,7 +24,10 @@ jobRoutes.get('/', async (c) => {
 /** Server-Sent Events stream of job progress for the current user (backed by Redis pub/sub). */
 jobRoutes.get('/events', async (c) => {
   const user = c.get('user');
-  return streamSSE(c, async (stream) => {
+  // Disable proxy buffering/compression (Caddy, Cloudflare, nginx) so progress events arrive instantly.
+  const res = streamSSE(c, async (stream) => {
+    // 2 KB comment pads past intermediary buffers so the browser receives the stream immediately.
+    await stream.write(`:${' '.repeat(2048)}\n\n`);
     const sub = createRedis();
     let closed = false;
     stream.onAbort(() => {
@@ -36,11 +39,16 @@ jobRoutes.get('/events', async (c) => {
     });
     await stream.writeSSE({ event: 'ready', data: '{}' });
     while (!closed) {
-      await stream.sleep(20_000);
+      await stream.sleep(15_000);
       if (!closed) await stream.writeSSE({ event: 'ping', data: String(Date.now()) }).catch(() => (closed = true));
     }
     await sub.quit().catch(() => sub.disconnect());
   });
+  // Set after streamSSE (it overwrites Cache-Control). no-transform stops Cloudflare from compressing
+  // (= buffering) the stream; X-Accel-Buffering disables nginx-style proxy buffering.
+  res.headers.set('Cache-Control', 'no-cache, no-transform');
+  res.headers.set('X-Accel-Buffering', 'no');
+  return res;
 });
 
 jobRoutes.get('/:id', async (c) => {

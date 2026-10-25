@@ -14,7 +14,7 @@ const RATIO_ICON: Record<string, typeof Smartphone> = { '9:16': Smartphone, '16:
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { subscribe } = useJobEvents();
+  const { subscribe, connected } = useJobEvents();
   const [items, setItems] = useState<ProjectItem[] | null>(null);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
@@ -38,6 +38,12 @@ export default function Dashboard() {
     return () => clearTimeout(t);
   }, [load]);
   useEffect(() => subscribe((ev) => ev.projectStatus && setItems((cur) => cur?.map((p) => (p.id === ev.projectId ? { ...p, status: ev.projectStatus! } : p)) ?? cur)), [subscribe]);
+  const busy = !!items?.some((p) => ['ANALYZING', 'VOICING', 'RENDERING'].includes(p.status));
+  useEffect(() => {
+    if (connected || !busy) return;
+    const t = setInterval(load, 6000);
+    return () => clearInterval(t);
+  }, [connected, busy, load]);
 
   const counts = {
     total: items?.length ?? 0,

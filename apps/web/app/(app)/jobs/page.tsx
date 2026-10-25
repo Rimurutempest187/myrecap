@@ -11,7 +11,7 @@ interface JobItem { id: string; projectId: string | null; projectTitle: string |
 export default function JobsPage() {
   const [items, setItems] = useState<JobItem[] | null>(null);
   const [error, setError] = useState('');
-  const { subscribe } = useJobEvents();
+  const { subscribe, connected } = useJobEvents();
   const toast = useToast();
   const load = useCallback(() => api<{ items: JobItem[] }>('/jobs?limit=100').then((r) => setItems(r.items)).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
@@ -22,6 +22,13 @@ export default function JobsPage() {
       return cur.map((j) => (j.id === ev.jobId ? { ...j, status: ev.status, progress: ev.progress, stage: ev.stage ?? j.stage, error: ev.error ?? j.error } : j));
     });
   }), [subscribe, load]);
+  // Polling fallback while the live stream is unavailable and something is still running
+  const hasActive = !!items?.some((j) => ['QUEUED', 'ACTIVE'].includes(j.status));
+  useEffect(() => {
+    if (connected || !hasActive) return;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [connected, hasActive, load]);
 
   const act = async (id: string, action: 'cancel' | 'retry') => {
     try {

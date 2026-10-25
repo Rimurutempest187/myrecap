@@ -13,7 +13,19 @@
 
 {$DOMAIN} {
 	tls /certs/origin.pem /certs/origin.key
-	encode zstd gzip
+	encode {
+		zstd
+		gzip
+		# never compress Server-Sent Events: compression buffers them until the stream ends
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type image/svg+xml*
+		}
+	}
 
 	request_body {
 		max_size 110MB

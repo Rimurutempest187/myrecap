@@ -101,9 +101,24 @@ function EventsProvider({ children }: { children: ReactNode }) {
     let es: EventSource | null = null;
     let retry: ReturnType<typeof setTimeout>;
     let stopped = false;
+    let readyTimer: ReturnType<typeof setTimeout>;
+    let failures = 0;
     const connect = () => {
       es = new EventSource('/api/jobs/events', { withCredentials: true });
-      es.addEventListener('ready', () => setConnected(true));
+      // Some proxies (e.g. Cloudflare quick tunnels) buffer SSE. If "ready" never arrives,
+      // report disconnected so pages fall back to polling, and retry the stream with backoff.
+      clearTimeout(readyTimer);
+      readyTimer = setTimeout(() => {
+        setConnected(false);
+        es?.close();
+        failures++;
+        if (!stopped) retry = setTimeout(connect, Math.min(60_000, 5000 * failures));
+      }, 8000);
+      es.addEventListener('ready', () => {
+        clearTimeout(readyTimer);
+        failures = 0;
+        setConnected(true);
+      });
       es.addEventListener('job', (m) => {
         try {
           const ev = JSON.parse((m as MessageEvent).data) as JobEvent;
@@ -113,15 +128,18 @@ function EventsProvider({ children }: { children: ReactNode }) {
         }
       });
       es.onerror = () => {
+        clearTimeout(readyTimer);
         setConnected(false);
         es?.close();
-        if (!stopped) retry = setTimeout(connect, 4000);
+        failures++;
+        if (!stopped) retry = setTimeout(connect, Math.min(60_000, 4000 * failures));
       };
     };
     connect();
     return () => {
       stopped = true;
       clearTimeout(retry);
+      clearTimeout(readyTimer);
       es?.close();
     };
   }, [user]);
