@@ -19,15 +19,25 @@ COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/
 RUN npm ci --no-audit --no-fund
 
-# ---------- build everything ----------
+# ---------- build the Node services (core + api + worker) ----------
+# Kept separate from the web build so building api/worker never runs the (memory-heavy) Next.js build.
 FROM deps AS build
 COPY tsconfig.base.json ./
 COPY packages packages
-COPY apps apps
+COPY apps/api apps/api
+COPY apps/worker apps/worker
 RUN npm run build -w @recap/core && npm run build -w @recap/api && npm run build -w @recap/worker
-RUN npm run build -w @recap/web
 # Prune dev dependencies for the Node services
 RUN npm prune --omit=dev --workspace=@recap/core --workspace=@recap/api --workspace=@recap/worker --include-workspace-root
+
+# ---------- build the web app (Next.js standalone) ----------
+FROM deps AS build-web
+# Cap the Node heap so the build fits on PCs / small VPSs instead of crashing the Docker engine.
+ENV NODE_OPTIONS=--max-old-space-size=2048
+COPY tsconfig.base.json ./
+COPY packages packages
+COPY apps/web apps/web
+RUN npm run build -w @recap/web
 
 # ---------- API ----------
 FROM base AS api
@@ -71,9 +81,9 @@ CMD ["node", "apps/worker/dist/index.js"]
 # ---------- Web (Next.js standalone) ----------
 FROM base AS web
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
-COPY --from=build /app/apps/web/.next/standalone ./
-COPY --from=build /app/apps/web/.next/static apps/web/.next/static
-COPY --from=build /app/apps/web/public apps/web/public
+COPY --from=build-web /app/apps/web/.next/standalone ./
+COPY --from=build-web /app/apps/web/.next/static apps/web/.next/static
+COPY --from=build-web /app/apps/web/public apps/web/public
 RUN useradd -r -u 10001 -g node app
 USER app
 EXPOSE 3000

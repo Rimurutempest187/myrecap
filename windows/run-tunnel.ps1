@@ -47,19 +47,106 @@ $TokenFile = Join-Path $env:LOCALAPPDATA "RecapAI\cloudflare-token.txt"
 $compose = @("compose", "--env-file", $EnvFile, "-f", "docker-compose.yml", "-f", "windows/docker-compose.tunnel.yml")
 if ($Quick) { $compose += @("--profile", "quick") }
 
+# ------------------------------------------------------------------ Docker helpers
+$DockerExe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+
+function Test-DockerEngine {
+  # Windows PowerShell 5.1 turns redirected stderr of a native command into an exception when
+  # $ErrorActionPreference = "Stop", so relax it just for this probe.
+  $old = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  try { docker info 2>&1 | Out-Null; return ($LASTEXITCODE -eq 0) } catch { return $false } finally { $ErrorActionPreference = $old }
+}
+
+function Invoke-Native([scriptblock]$Block) {
+  $old = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  try { & $Block 2>&1 | Out-String } catch { "" } finally { $ErrorActionPreference = $old }
+}
+
+function Wait-DockerEngine([int]$Seconds = 240) {
+  for ($i = 0; $i -lt ($Seconds / 4); $i++) {
+    if (Test-DockerEngine) { return $true }
+    Start-Sleep 4
+  }
+  return $false
+}
+
+function Restart-DockerDesktop([string]$Why = "") {
+  if ($Why) { Warn $Why }
+  Warn "Restarting Docker Desktop (about 1-2 minutes)..."
+  Get-Process -Name "Docker Desktop", "com.docker.backend", "com.docker.build", "com.docker.dev-envs" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep 3
+  Invoke-Native { wsl --shutdown } | Out-Null
+  Start-Sleep 5
+  if (Test-Path $DockerExe) { Start-Process $DockerExe } else { Warn "Open Docker Desktop manually." }
+  if (Wait-DockerEngine 300) { Ok "Docker Desktop is running again"; return $true }
+  Fail "Docker Desktop did not start. Open it manually, wait for 'Engine running', then run this script again."
+}
+
+# Give WSL2 (where Docker runs) enough memory + swap so the build does not crash the engine.
+# Only creates %USERPROFILE%\.wslconfig when it does not exist yet (never overwrites your own file).
+function Ensure-WslConfig {
+  $cfg = Join-Path $env:USERPROFILE ".wslconfig"
+  try { $ramGB = [math]::Floor((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB) } catch { $ramGB = 8 }
+  if ($ramGB -lt 8) { Warn "This PC has $ramGB GB RAM. 8 GB+ is recommended; the first build may be slow." }
+  if (Test-Path $cfg) { return $false }
+  $mem = [math]::Max(3, [math]::Min(12, [math]::Floor($ramGB * 0.6)))
+  $swapDir = $null
+  if (Test-Path "D:\") { $swapDir = "D:\DockerData" }
+  $lines = @("[wsl2]", "memory=${mem}GB", "swap=8GB")
+  if ($swapDir) {
+    New-Item -ItemType Directory -Force $swapDir | Out-Null
+    $lines += "swapFile=" + (($swapDir + "\wsl-swap.vhdx") -replace '\\', '\\')
+  }
+  Set-Content -Path $cfg -Value $lines -Encoding ascii
+  Ok "Created $cfg (WSL memory ${mem}GB + 8GB swap) so Docker builds do not run out of memory"
+  return $true
+}
+
+# Run "docker compose <args>" with retries; restarts Docker Desktop automatically if the engine crashed.
+function Invoke-Compose([string[]]$CArgs, [string]$Label, [int]$Tries = 3) {
+  for ($t = 1; $t -le $Tries; $t++) {
+    if (-not (Test-DockerEngine)) { Restart-DockerDesktop "Docker engine is not responding." | Out-Null }
+    docker @compose @CArgs
+    if ($LASTEXITCODE -eq 0) { return $true }
+    if ($t -lt $Tries) {
+      Warn "$Label failed (try $t of $Tries)."
+      if (-not (Test-DockerEngine)) { Restart-DockerDesktop "The Docker engine crashed (usually: out of memory during the build)." | Out-Null }
+      else { Start-Sleep 10 }
+    }
+  }
+  return $false
+}
+
+# Build the three app images ONE AT A TIME (parallel builds use too much memory on a PC).
+function Build-AppImages {
+  foreach ($svc in @("api", "worker", "web")) {
+    Step "Building $svc image (first time: api 5-15 min, worker/web faster - they reuse the cache)"
+    if (-not (Invoke-Compose @("build", $svc) "Build $svc")) { Show-DockerHelp; Fail "Building the $svc image failed - see the messages above." }
+    Ok "$svc image ready"
+  }
+}
+
+function Show-DockerHelp {
+  Write-Host ""
+  Warn "Docker failed several times. Try, in this order, then run this script again:"
+  Warn "  1) Restart Windows (clears stuck Docker/WSL state)."
+  Warn "  2) Docker Desktop -> Settings -> Resources: give Memory 6 GB+ (if shown) -> Apply & restart."
+  Warn "  3) Need 20 GB+ free on Docker's drive (Settings -> Resources -> Advanced -> Disk image location)."
+  Warn "  4) Clean half-built data:  docker builder prune -a -f   (your app data volumes are kept)"
+  Warn "  5) Still failing: Docker Desktop -> Troubleshoot (bug icon) -> 'Clean / Purge data' -> WSL 2, restart PC."
+}
+
 # ------------------------------------------------------------------ Docker check
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   Fail "Docker Desktop is not installed. Run:  winget install --id Docker.DockerDesktop -e   then restart Windows and open Docker Desktop."
 }
-docker info *> $null
-if ($LASTEXITCODE -ne 0) {
-  Warn "Docker Desktop is not running - starting it..."
-  $dd = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-  if (Test-Path $dd) { Start-Process $dd }
-  for ($i = 0; $i -lt 60; $i++) { Start-Sleep 3; docker info *> $null; if ($LASTEXITCODE -eq 0) { break } }
-  docker info *> $null
-  if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop did not start. Open it manually, wait for 'Engine running', then re-run." }
+if (-not (Test-DockerEngine)) {
+  Warn "Docker Desktop is not running (or its engine crashed) - starting it..."
+  if (Test-Path $DockerExe) { Start-Process $DockerExe }
+  if (-not (Wait-DockerEngine 180)) { Restart-DockerDesktop | Out-Null }
 }
+Ok "Docker engine is running"
 
 # ------------------------------------------------------------------ quick actions
 if ($Stop)   { docker @compose down; Ok "Stopped. Data is kept (Docker volumes)."; exit }
@@ -73,7 +160,8 @@ if ($Backup) {
 }
 if ($Update) {
   if (Get-Command git -ErrorAction SilentlyContinue) { git pull --ff-only }
-  docker @compose up -d --build
+  Build-AppImages
+  if (-not (Invoke-Compose @("up", "-d") "Start")) { Show-DockerHelp; Fail "Starting the app failed." }
   Ok "Updated"; exit
 }
 
@@ -274,18 +362,6 @@ if (-not $Quick) {
 }
 
 # ------------------------------------------------------------------ start
-function Show-DockerDiskHelp {
-  Write-Host ""
-  Warn "Docker could not write to its virtual disk (input/output error)."
-  Warn "Usual causes: drive C: almost full, or Docker's disk got a write error during a download."
-  Warn "Fix (in this order, then run this script again):"
-  Warn "  1) Need 20 GB+ free on Docker's drive. Or move Docker's disk to D: -> Docker Desktop -> Settings ->"
-  Warn "     Resources -> Advanced -> Disk image location -> D:\DockerData -> Apply & restart."
-  Warn "  2) Close Docker Desktop (tray icon -> Quit), then run:  wsl --shutdown   and open Docker Desktop again."
-  Warn "  3) Clean half-downloaded data:  docker system prune -a -f   (safe: your app data volumes are kept)"
-  Warn "  4) Still failing: Docker Desktop -> Troubleshoot (bug icon) -> 'Clean / Purge data' -> WSL 2, restart PC."
-}
-
 # Free-space check on the drive that holds Docker's disk image
 # (C: by default; Settings -> Resources -> Advanced -> Disk image location can move it, e.g. to D:).
 function Get-DockerDataDrive {
@@ -308,31 +384,24 @@ try {
   else { Ok "Docker disk on ${dd}: - $freeGB GB free" }
 } catch { }
 
+# Memory for WSL2/Docker (restart Docker once if the config was just created so it takes effect)
+if (Ensure-WslConfig) { Restart-DockerDesktop "Applying the new WSL memory settings." | Out-Null }
+
 # Pull ready-made images first, with retries (big downloads sometimes break on slow/unstable internet).
 Step "Downloading base images (postgres, redis, caddy, cloudflared)"
-$pulled = $false
-for ($try = 1; $try -le 3 -and -not $pulled; $try++) {
-  if ($try -gt 1) { Warn "Download failed - retry $try of 3 in 10 seconds..."; Start-Sleep 10 }
-  docker @compose pull --ignore-buildable
-  if ($LASTEXITCODE -eq 0) { $pulled = $true }
-}
-if (-not $pulled) { Show-DockerDiskHelp; Fail "Could not download the base images." }
+if (-not (Invoke-Compose @("pull", "--ignore-buildable") "Download")) { Show-DockerHelp; Fail "Could not download the base images." }
 
-Step "Building & starting (first build: 5-15 minutes)"
+Build-AppImages
+
+Step "Starting all services"
 if ($Quick) {
   # the named tunnel needs a token; in quick mode run everything except it
   Set-EnvValue "TUNNEL_TOKEN" "quick-mode"
-  docker @compose up -d --build postgres redis api worker web caddy cloudflared-quick
+  $ok = Invoke-Compose @("up", "-d", "postgres", "redis", "api", "worker", "web", "caddy", "cloudflared-quick") "Start"
 } else {
-  docker @compose up -d --build
+  $ok = Invoke-Compose @("up", "-d") "Start"
 }
-if ($LASTEXITCODE -ne 0) {
-  Warn "Build/start failed - retrying once in 10 seconds..."
-  Start-Sleep 10
-  if ($Quick) { docker @compose up -d --build postgres redis api worker web caddy cloudflared-quick }
-  else { docker @compose up -d --build }
-}
-if ($LASTEXITCODE -ne 0) { Show-DockerDiskHelp; Fail "docker compose failed - see the messages above." }
+if (-not $ok) { Show-DockerHelp; Fail "docker compose up failed - see the messages above." }
 
 Write-Host -NoNewline "  waiting for the app"
 for ($i = 0; $i -lt 90; $i++) {
@@ -348,7 +417,7 @@ if ($Quick) {
   Step "Getting your temporary public URL"
   $url = $null
   for ($i = 0; $i -lt 30 -and -not $url; $i++) {
-    $log = docker @compose logs cloudflared-quick 2>&1 | Out-String
+    $log = Invoke-Native { docker @compose logs cloudflared-quick }
     $m = [regex]::Match($log, "https://[a-z0-9-]+\.trycloudflare\.com")
     if ($m.Success) { $url = $m.Value } else { Start-Sleep 2 }
   }
