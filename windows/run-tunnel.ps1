@@ -279,17 +279,33 @@ function Show-DockerDiskHelp {
   Warn "Docker could not write to its virtual disk (input/output error)."
   Warn "Usual causes: drive C: almost full, or Docker's disk got a write error during a download."
   Warn "Fix (in this order, then run this script again):"
-  Warn "  1) Free space on C: (need 20 GB+). Empty Recycle Bin, Settings -> System -> Storage -> Temporary files."
+  Warn "  1) Need 20 GB+ free on Docker's drive. Or move Docker's disk to D: -> Docker Desktop -> Settings ->"
+  Warn "     Resources -> Advanced -> Disk image location -> D:\DockerData -> Apply & restart."
   Warn "  2) Close Docker Desktop (tray icon -> Quit), then run:  wsl --shutdown   and open Docker Desktop again."
   Warn "  3) Clean half-downloaded data:  docker system prune -a -f   (safe: your app data volumes are kept)"
   Warn "  4) Still failing: Docker Desktop -> Troubleshoot (bug icon) -> 'Clean / Purge data' -> WSL 2, restart PC."
 }
 
-# Free-space check: Docker Desktop keeps its disk image on C: by default.
+# Free-space check on the drive that holds Docker's disk image
+# (C: by default; Settings -> Resources -> Advanced -> Disk image location can move it, e.g. to D:).
+function Get-DockerDataDrive {
+  foreach ($f in @("$env:APPDATA\Docker\settings-store.json", "$env:APPDATA\Docker\settings.json")) {
+    if (-not (Test-Path $f)) { continue }
+    try {
+      $j = Get-Content $f -Raw | ConvertFrom-Json
+      foreach ($k in @("CustomWslDistroDir", "customWslDistroDir", "DataFolder", "dataFolder")) {
+        $v = $j.$k
+        if ($v -and ($v -match '^([A-Za-z]):')) { return $Matches[1].ToUpper() }
+      }
+    } catch { }
+  }
+  return "C"
+}
 try {
-  $freeGB = [math]::Round((Get-PSDrive -Name C).Free / 1GB, 1)
-  if ($freeGB -lt 15) { Warn "Only $freeGB GB free on C:. Docker needs about 15-20 GB for the first build." }
-  else { Ok "Free disk space on C: $freeGB GB" }
+  $dd = Get-DockerDataDrive
+  $freeGB = [math]::Round((Get-PSDrive -Name $dd).Free / 1GB, 1)
+  if ($freeGB -lt 15) { Warn "Docker disk is on ${dd}: with only $freeGB GB free. The first build needs about 15-20 GB." }
+  else { Ok "Docker disk on ${dd}: - $freeGB GB free" }
 } catch { }
 
 # Pull ready-made images first, with retries (big downloads sometimes break on slow/unstable internet).

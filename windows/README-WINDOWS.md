@@ -29,6 +29,10 @@ PC restart → Docker Desktop ဖွင့် → "Engine running" (အစိမ
 Settings → General → "Start Docker Desktop when you sign in" ကို အမှန်ခြစ်ထားပါ။
 (RAM 8GB+ အကြံပြု။ Settings → Resources မှာ Memory 4GB+ ပေးပါ။)
 
+**A1b. (C: နေရာမလောက်ရင်) Docker disk ကို D: သို့ ရွှေ့ပါ**
+Docker Desktop → ⚙️ Settings → Resources → Advanced → **Disk image location** → `Browse` → `D:\DockerData` (folder အသစ်) → **Apply & restart**။
+ရွှေ့ပြီးရင် `docker system prune -a -f` နဲ့ ပျက်နေတဲ့ download ဟောင်းတွေ ရှင်းပါ။ Database, video ဖိုင်တွေ အားလုံး D: ပေါ်မှာ သိမ်းသွားပါမယ်။
+
 **A2. Cloudflare API Token ဖန်တီးပါ** — https://dash.cloudflare.com/profile/api-tokens → Create Token → Custom token:
 
 | Type | Permission | Access |
