@@ -124,10 +124,19 @@ function Setup-Tunnel {
 
   # Find the zone for the domain (walk up: a.b.example.com -> b.example.com -> example.com)
   $zone = $null; $parts = $Domain.Split(".")
+  # NOTE: always wrap API results in @(...). Windows PowerShell 5.1 unrolls a 1-item array into a single
+  # object, and a single [PSCustomObject] has no .Count there, so "$z.Count -gt 0" would be false.
   for ($i = 0; $i -lt $parts.Length - 1 -and -not $zone; $i++) {
     $name = ($parts[$i..($parts.Length - 1)] -join ".")
-    $z = Cf GET "/zones?name=$name"
+    $z = @(Cf GET "/zones?name=$name")
     if ($z.Count -gt 0) { $zone = $z[0] }
+  }
+  if (-not $zone) {
+    # Fallback: list every zone the token can see and pick the one that owns the domain.
+    $all = @(Cf GET "/zones?per_page=50")
+    foreach ($cand in $all) {
+      if ($Domain -eq $cand.name -or $Domain.EndsWith("." + $cand.name)) { $zone = $cand; break }
+    }
   }
   if (-not $zone) {
     # Diagnose: which zones can this token see? Then forget the token so the next run asks again.
@@ -141,8 +150,8 @@ function Setup-Tunnel {
     } else {
       Warn "This token can only see these domains:"
       foreach ($vz in $visible) { Write-Host ("      - {0}  (status: {1}, account: {2})" -f $vz.name, $vz.status, $vz.account.name) -ForegroundColor Yellow }
-      Warn "Your domain is not in the list. Either the token's Zone Resources is wrong,"
-      Warn "or the domain is in a different Cloudflare account / not added to Cloudflare yet."
+      Warn "None of them is $Domain or a parent domain of it. Check the spelling of -Domain,"
+      Warn "the token's Zone Resources, or whether the domain is in another Cloudflare account."
     }
     Write-Host ""
     Warn "Fix: create a new token (Zone Resources -> Include -> All zones is easiest), then run this script again."
@@ -153,7 +162,7 @@ function Setup-Tunnel {
   Ok "Zone $($zone.name) (account $($zone.account.name))"
 
   # Tunnel (reuse if it exists)
-  $t = Cf GET "/accounts/$accountId/cfd_tunnel?name=$TunnelName&is_deleted=false"
+  $t = @(Cf GET "/accounts/$accountId/cfd_tunnel?name=$TunnelName&is_deleted=false")
   if ($t.Count -gt 0) { $tunnel = $t[0]; Ok "Reusing tunnel '$TunnelName' ($($tunnel.id))" }
   else {
     $secret = [Convert]::ToBase64String((1..32 | ForEach-Object { [byte](Get-Random -Maximum 256) }))
@@ -175,7 +184,7 @@ function Setup-Tunnel {
   # DNS: CNAME <domain> -> <tunnel-id>.cfargotunnel.com (proxied). Replaces an existing A/CNAME for the same name.
   $target = "$($tunnel.id).cfargotunnel.com"
   $done = $false
-  $existing = Cf GET "/zones/$($zone.id)/dns_records?name=$Domain"
+  $existing = @(Cf GET "/zones/$($zone.id)/dns_records?name=$Domain")
   foreach ($r in $existing) {
     if ($r.type -eq "CNAME" -and $r.content -eq $target) { $done = $true; continue }
     if ($r.type -in @("A", "AAAA", "CNAME")) {
