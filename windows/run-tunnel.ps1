@@ -274,6 +274,34 @@ if (-not $Quick) {
 }
 
 # ------------------------------------------------------------------ start
+function Show-DockerDiskHelp {
+  Write-Host ""
+  Warn "Docker could not write to its virtual disk (input/output error)."
+  Warn "Usual causes: drive C: almost full, or Docker's disk got a write error during a download."
+  Warn "Fix (in this order, then run this script again):"
+  Warn "  1) Free space on C: (need 20 GB+). Empty Recycle Bin, Settings -> System -> Storage -> Temporary files."
+  Warn "  2) Close Docker Desktop (tray icon -> Quit), then run:  wsl --shutdown   and open Docker Desktop again."
+  Warn "  3) Clean half-downloaded data:  docker system prune -a -f   (safe: your app data volumes are kept)"
+  Warn "  4) Still failing: Docker Desktop -> Troubleshoot (bug icon) -> 'Clean / Purge data' -> WSL 2, restart PC."
+}
+
+# Free-space check: Docker Desktop keeps its disk image on C: by default.
+try {
+  $freeGB = [math]::Round((Get-PSDrive -Name C).Free / 1GB, 1)
+  if ($freeGB -lt 15) { Warn "Only $freeGB GB free on C:. Docker needs about 15-20 GB for the first build." }
+  else { Ok "Free disk space on C: $freeGB GB" }
+} catch { }
+
+# Pull ready-made images first, with retries (big downloads sometimes break on slow/unstable internet).
+Step "Downloading base images (postgres, redis, caddy, cloudflared)"
+$pulled = $false
+for ($try = 1; $try -le 3 -and -not $pulled; $try++) {
+  if ($try -gt 1) { Warn "Download failed - retry $try of 3 in 10 seconds..."; Start-Sleep 10 }
+  docker @compose pull --ignore-buildable
+  if ($LASTEXITCODE -eq 0) { $pulled = $true }
+}
+if (-not $pulled) { Show-DockerDiskHelp; Fail "Could not download the base images." }
+
 Step "Building & starting (first build: 5-15 minutes)"
 if ($Quick) {
   # the named tunnel needs a token; in quick mode run everything except it
@@ -282,7 +310,13 @@ if ($Quick) {
 } else {
   docker @compose up -d --build
 }
-if ($LASTEXITCODE -ne 0) { Fail "docker compose failed - see the messages above." }
+if ($LASTEXITCODE -ne 0) {
+  Warn "Build/start failed - retrying once in 10 seconds..."
+  Start-Sleep 10
+  if ($Quick) { docker @compose up -d --build postgres redis api worker web caddy cloudflared-quick }
+  else { docker @compose up -d --build }
+}
+if ($LASTEXITCODE -ne 0) { Show-DockerDiskHelp; Fail "docker compose failed - see the messages above." }
 
 Write-Host -NoNewline "  waiting for the app"
 for ($i = 0; $i -lt 90; $i++) {
