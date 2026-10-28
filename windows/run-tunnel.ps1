@@ -91,7 +91,9 @@ function Get-CfToken {
       Account  | Cloudflare Tunnel | Edit
       Zone     | DNS               | Edit
       Zone     | Zone              | Read
-    Account Resources: your account     Zone Resources: Include -> Specific zone -> your domain's zone
+    Account Resources: Include -> your account
+    Zone Resources:    Include -> All zones   (easiest; or Specific zone -> the main domain, e.g. pinlonmail.com)
+    Note: the domain must be added to THIS Cloudflare account (Websites list shows it as Active).
 "@ -ForegroundColor Yellow
   Start-Process "https://dash.cloudflare.com/profile/api-tokens"
   $sec = Read-Host "Paste the API token" -AsSecureString
@@ -127,7 +129,26 @@ function Setup-Tunnel {
     $z = Cf GET "/zones?name=$name"
     if ($z.Count -gt 0) { $zone = $z[0] }
   }
-  if (-not $zone) { Fail "Zone for $Domain not found in this Cloudflare account (or the token has no Zone:Read for it)." }
+  if (-not $zone) {
+    # Diagnose: which zones can this token see? Then forget the token so the next run asks again.
+    $visible = @()
+    try { $visible = @(Cf GET "/zones?per_page=50") } catch { }
+    if (Test-Path $TokenFile) { Remove-Item $TokenFile -ErrorAction SilentlyContinue }
+    Write-Host ""
+    if ($visible.Count -eq 0) {
+      Warn "This token can not see ANY domain (zone). Cause: the token is missing 'Zone | Zone | Read',"
+      Warn "or 'Zone Resources' does not include your domain."
+    } else {
+      Warn "This token can only see these domains:"
+      foreach ($vz in $visible) { Write-Host ("      - {0}  (status: {1}, account: {2})" -f $vz.name, $vz.status, $vz.account.name) -ForegroundColor Yellow }
+      Warn "Your domain is not in the list. Either the token's Zone Resources is wrong,"
+      Warn "or the domain is in a different Cloudflare account / not added to Cloudflare yet."
+    }
+    Write-Host ""
+    Warn "Fix: create a new token (Zone Resources -> Include -> All zones is easiest), then run this script again."
+    Warn "The saved token was removed, so the script will ask for the new one."
+    Fail "Zone for $Domain not found for this token."
+  }
   $accountId = $zone.account.id
   Ok "Zone $($zone.name) (account $($zone.account.name))"
 
