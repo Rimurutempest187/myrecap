@@ -103,11 +103,28 @@ function Get-CfToken {
 }
 
 $script:CfHeaders = $null
+function Show-PermissionHelp([string]$Path) {
+  if (Test-Path $TokenFile) { Remove-Item $TokenFile -ErrorAction SilentlyContinue }
+  Write-Host ""
+  if ($Path -like "*cfd_tunnel*") {
+    Warn "The token is NOT allowed to create/edit Cloudflare Tunnels."
+    Warn "Fix: dash.cloudflare.com/profile/api-tokens -> your token -> Edit (or create a new one) and make sure:"
+    Warn "   Account | Cloudflare Tunnel | Edit      <- must be EDIT, not Read"
+    Warn "   Account Resources: Include -> Karangmerry...'s Account (your account, not 'All accounts' of another user)"
+  } elseif ($Path -like "*dns_records*") {
+    Warn "The token is NOT allowed to edit DNS. Add:  Zone | DNS | Edit"
+  }
+  Warn "Then run:  .\windows\run-tunnel.ps1   (the saved token was removed; paste the new/updated token)"
+  Warn "If the permission is already correct: open dash.cloudflare.com -> Zero Trust once and finish the free"
+  Warn "onboarding (choose team name + Free plan). New accounts must do this before tunnels can be created."
+}
+
 function Cf([string]$Method, [string]$Path, $Body = $null) {
   $p = @{ Method = $Method; Uri = "https://api.cloudflare.com/client/v4$Path"; Headers = $script:CfHeaders; ContentType = "application/json" }
   if ($null -ne $Body) { $p.Body = ($Body | ConvertTo-Json -Depth 10 -Compress) }
   try { $r = Invoke-RestMethod @p } catch {
     $msg = $_.ErrorDetails.Message; if (-not $msg) { $msg = $_.Exception.Message }
+    if ($msg -match '"code":\s*(10000|9109)' -or $msg -match 'Authentication error|Unauthorized') { Show-PermissionHelp $Path }
     Fail "Cloudflare API $Method $Path failed: $msg"
   }
   if (-not $r.success) { Fail "Cloudflare API error: $($r.errors | ConvertTo-Json -Compress)" }
