@@ -21,6 +21,7 @@
   .\windows\run-tunnel.ps1 -Quick       # no domain: temporary https://xxxx.trycloudflare.com URL
   .\windows\run-tunnel.ps1 -Stop | -Logs | -Status | -Update | -Backup
   .\windows\run-tunnel.ps1 -ShowLogin                      # show admin email + password
+  .\windows\run-tunnel.ps1 -Doctor                         # full health report (send it for help)
   .\windows\run-tunnel.ps1 -ResetPassword                  # new random admin password
   .\windows\run-tunnel.ps1 -ResetPassword -NewPassword "MyPass123!"
 #>
@@ -37,6 +38,7 @@ param(
   [switch]$Backup,
   [switch]$ResetToken,
   [switch]$ShowLogin,
+  [switch]$Doctor,
   [switch]$ResetPassword,
   [string]$NewPassword = ""
 )
@@ -138,8 +140,34 @@ function Invoke-Compose([string[]]$CArgs, [string]$Label, [int]$Tries = 3) {
   return $false
 }
 
+# Prefer ready-made images built by GitHub Actions (ci/docker-publish.yml -> ghcr.io). Downloading is
+# much faster than building and avoids the memory crashes of a local build. Returns $true if all 3 exist.
+function Get-PrebuiltImages {
+  if ($env:RECAP_LOCAL_BUILD -eq "1") { return $false }
+  $owner = "rimurutempest187"
+  try {
+    $remote = (Invoke-Native { git remote get-url origin }).Trim()
+    $mm = [regex]::Match($remote, "github\.com[:/]+([^/]+)/")
+    if ($mm.Success) { $owner = $mm.Groups[1].Value.ToLower() }
+  } catch { }
+  Step "Downloading ready-made app images from ghcr.io/$owner (no local build needed)"
+  foreach ($svc in @("api", "worker", "web")) {
+    $src = "ghcr.io/$owner/myrecap-${svc}:latest"
+    $out = Invoke-Native { docker pull $src }
+    if ($LASTEXITCODE -ne 0) {
+      Warn "Ready-made image $src is not available yet - this PC will build the images instead."
+      Warn "(Tip: run .\windows\enable-cloud-build.ps1 once so GitHub builds them for you.)"
+      return $false
+    }
+    Invoke-Native { docker tag $src "recapai-$svc" } | Out-Null
+    Ok "$svc image downloaded"
+  }
+  return $true
+}
+
 # Build the three app images ONE AT A TIME (parallel builds use too much memory on a PC).
 function Build-AppImages {
+  if (Get-PrebuiltImages) { return }
   foreach ($svc in @("api", "worker", "web")) {
     Step "Building $svc image (first time: api 5-15 min, worker/web faster - they reuse the cache)"
     if (-not (Invoke-Compose @("build", $svc) "Build $svc")) { Show-DockerHelp; Fail "Building the $svc image failed - see the messages above." }
@@ -172,6 +200,30 @@ Ok "Docker engine is running"
 if ($Stop)   { docker @compose down; Ok "Stopped. Data is kept (Docker volumes)."; exit }
 if ($Logs)   { docker @compose logs -f --tail=100 api worker cloudflared; exit }
 if ($Status) { docker @compose ps; exit }
+if ($Doctor) {
+  Step "RecapAI health report (copy everything below and send it for help)"
+  try { $ram = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB) } catch { $ram = "?" }
+  Write-Host "  PC RAM: $ram GB   CPUs: $([Environment]::ProcessorCount)"
+  foreach ($d in @("C", "D")) { try { Write-Host ("  Free on {0}: {1} GB" -f $d, [math]::Round((Get-PSDrive $d -ErrorAction Stop).Free / 1GB, 1)) } catch { } }
+  $wc = Join-Path $env:USERPROFILE ".wslconfig"
+  if (Test-Path $wc) { Write-Host "  .wslconfig: $((Get-Content $wc) -join ' | ')" } else { Write-Host "  .wslconfig: (none)" }
+  Write-Host ("  Docker memory: {0} GB" -f [math]::Round(([double](Invoke-Native { docker info --format "{{.MemTotal}}" }).Trim()) / 1GB, 1))
+  Write-Host "  git: $((Invoke-Native { git log -1 --format='%h %s' }).Trim())"
+  Write-Host "  .env.tunnel: $(if (Test-Path $EnvFile) { 'present' } else { 'MISSING' })   tunnel token: $(if ((Test-Path $EnvFile) -and (Select-String -Path $EnvFile -Pattern '^TUNNEL_TOKEN=.{20,}' -Quiet)) { 'set' } else { 'MISSING' })"
+  Step "Containers"
+  Invoke-Native { docker @compose ps -a --format "table {{.Service}}\t{{.State}}\t{{.Status}}" } | Write-Host
+  Step "Images"
+  Invoke-Native { docker images --format "{{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}" } | Select-String "recapai|myrecap" | ForEach-Object { Write-Host "  $_" }
+  Step "Local health (http://127.0.0.1:8080/api/health)"
+  try { $h = Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/health" -TimeoutSec 5; Write-Host "  $($h | ConvertTo-Json -Compress)" } catch { Write-Host "  NOT reachable: $($_.Exception.Message)" }
+  Step "Public site (https://$Domain/api/health)"
+  try { $h = Invoke-RestMethod -Uri "https://$Domain/api/health" -TimeoutSec 10; Write-Host "  $($h | ConvertTo-Json -Compress)" } catch { Write-Host "  NOT reachable: $($_.Exception.Message)" }
+  foreach ($svc in @("cloudflared", "api", "worker", "web", "caddy", "postgres")) {
+    Step "Last log lines: $svc"
+    Invoke-Native { docker @compose logs --no-color --tail=15 $svc } | Write-Host
+  }
+  exit
+}
 if ($Backup) {
   New-Item -ItemType Directory -Force backups | Out-Null
   $f = "backups\recap-$(Get-Date -Format 'yyyy-MM-dd-HHmm').sql"

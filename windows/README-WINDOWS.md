@@ -52,6 +52,12 @@ Zone Resources → Include → Specific zone → `pinlonmail.com` → Create →
 
 > ⚠️ `myrecap.pinlonmail.com` အတွက် Cloudflare DNS မှာ A record (VPS IP) ရှိပြီးသားဆိုရင် script က tunnel CNAME နဲ့ အစားထိုးပါမယ်။
 
+**A4. (အကြံပြု) GitHub က image တွေ build ပေးအောင် တစ်ကြိမ်ဖွင့်ပါ** — PC မှာ build မလုပ်ရတော့လို့ Docker crash မဖြစ်တော့ပါ၊ ပိုမြန်ပါတယ်:
+```powershell
+.\windows\enable-cloud-build.ps1
+```
+GitHub Actions မှာ "Docker images" အစိမ်းဖြစ်ရင် package ၃ ခု (myrecap-api / worker / web) ကို **Public** ပြောင်းပါ (script က link ပြပေးပါမယ်)။ ပြီးရင် `run-tunnel.ps1` က download ပဲ လုပ်ပါတော့မယ်။
+
 **နေ့စဉ်သုံး command များ:**
 ```powershell
 .\windows\run-tunnel.ps1            # start (PC restart ပြီးတိုင်း)
@@ -63,6 +69,7 @@ Zone Resources → Include → Specific zone → `pinlonmail.com` → Create →
 .\windows\run-tunnel.ps1 -Quick     # domain မသုံးဘဲ ယာယီ https://xxxx.trycloudflare.com
 .\windows\run-tunnel.ps1 -ResetToken # Cloudflare token အသစ်ထည့်
 .\windows\run-tunnel.ps1 -ShowLogin  # Admin email / password ပြန်ကြည့်
+.\windows\run-tunnel.ps1 -Doctor     # ပြဿနာရှာ report (အကုန် copy ကူးပို့ပါ)
 .\windows\run-tunnel.ps1 -ResetPassword                          # password အသစ် (random)
 .\windows\run-tunnel.ps1 -ResetPassword -NewPassword "MyPass123!" # ကိုယ်ကြိုက်တဲ့ password
 ```
