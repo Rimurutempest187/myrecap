@@ -62,6 +62,9 @@ Zone Resources → Include → Specific zone → `pinlonmail.com` → Create →
 .\windows\run-tunnel.ps1 -Stop      # ရပ်
 .\windows\run-tunnel.ps1 -Quick     # domain မသုံးဘဲ ယာယီ https://xxxx.trycloudflare.com
 .\windows\run-tunnel.ps1 -ResetToken # Cloudflare token အသစ်ထည့်
+.\windows\run-tunnel.ps1 -ShowLogin  # Admin email / password ပြန်ကြည့်
+.\windows\run-tunnel.ps1 -ResetPassword                          # password အသစ် (random)
+.\windows\run-tunnel.ps1 -ResetPassword -NewPassword "MyPass123!" # ကိုယ်ကြိုက်တဲ့ password
 ```
 
 **Option A ပြဿနာများ:**

@@ -20,6 +20,9 @@
   .\windows\run-tunnel.ps1 -Domain myrecap.pinlonmail.com -Email you@gmail.com
   .\windows\run-tunnel.ps1 -Quick       # no domain: temporary https://xxxx.trycloudflare.com URL
   .\windows\run-tunnel.ps1 -Stop | -Logs | -Status | -Update | -Backup
+  .\windows\run-tunnel.ps1 -ShowLogin                      # show admin email + password
+  .\windows\run-tunnel.ps1 -ResetPassword                  # new random admin password
+  .\windows\run-tunnel.ps1 -ResetPassword -NewPassword "MyPass123!"
 #>
 [CmdletBinding()]
 param(
@@ -32,7 +35,10 @@ param(
   [switch]$Status,
   [switch]$Update,
   [switch]$Backup,
-  [switch]$ResetToken
+  [switch]$ResetToken,
+  [switch]$ShowLogin,
+  [switch]$ResetPassword,
+  [string]$NewPassword = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +52,20 @@ $EnvFile = ".env.tunnel"
 $TokenFile = Join-Path $env:LOCALAPPDATA "RecapAI\cloudflare-token.txt"
 $compose = @("compose", "--env-file", $EnvFile, "-f", "docker-compose.yml", "-f", "windows/docker-compose.tunnel.yml")
 if ($Quick) { $compose += @("--profile", "quick") }
+
+# ------------------------------------------------------------------ show admin login (no Docker needed)
+if ($ShowLogin) {
+  if (-not (Test-Path $EnvFile)) { Fail "$EnvFile not found. Run .\windows\run-tunnel.ps1 once first." }
+  $em = (Get-Content $EnvFile | Where-Object { $_ -match "^ADMIN_EMAIL=" }) -replace "^ADMIN_EMAIL=", ""
+  $pw = (Get-Content $EnvFile | Where-Object { $_ -match "^ADMIN_PASSWORD=" }) -replace "^ADMIN_PASSWORD=", ""
+  Write-Host ""
+  Write-Host "  Website : https://$Domain" -ForegroundColor Cyan
+  Write-Host "  Email   : $em" -ForegroundColor Cyan
+  Write-Host "  Password: $pw" -ForegroundColor Cyan
+  Write-Host ""
+  Warn "This is the password from the FIRST setup. If you changed it on the website, use -ResetPassword."
+  exit
+}
 
 # ------------------------------------------------------------------ Docker helpers
 $DockerExe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
@@ -314,6 +334,34 @@ function Set-EnvValue([string]$key, [string]$value) {
   Set-Content -Path $EnvFile -Value $lines -Encoding ascii
 }
 
+# ------------------------------------------------------------------ reset admin password
+if ($ResetPassword) {
+  if (-not (Test-Path $EnvFile)) { Fail "$EnvFile not found. Run .\windows\run-tunnel.ps1 once first." }
+  $em = $Email
+  if (-not $em) { $em = (Get-Content $EnvFile | Where-Object { $_ -match "^ADMIN_EMAIL=" }) -replace "^ADMIN_EMAIL=", "" }
+  if (-not $em) { $em = Read-Host "Admin email" }
+  $pw = $NewPassword
+  if (-not $pw) { $pw = (Rand 8) + "Aa1!" }
+  if ($pw.Length -lt 8) { Fail "The new password must have at least 8 characters." }
+  $running = Invoke-Native { docker @compose ps --status running --services }
+  if ($running -notmatch "(?m)^api\s*$") { Fail "The website is not running. Start it first:  .\windows\run-tunnel.ps1" }
+  Step "Resetting the admin password for $em"
+  $js = Get-Content "windows\reset-admin.mjs" -Raw
+  $old = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $out = ($js | docker @compose exec -T -e "RESET_EMAIL=$em" -e "RESET_PASSWORD=$pw" api node --input-type=module - 2>&1 | Out-String)
+  $ErrorActionPreference = $old
+  if ($out -notmatch "RESET_OK") { Write-Host $out; Fail "Password reset failed - see the messages above." }
+  Set-EnvValue "ADMIN_EMAIL" $em
+  Set-EnvValue "ADMIN_PASSWORD" $pw
+  Ok "Password changed (also saved in $EnvFile)"
+  Write-Host ""
+  Write-Host "  Website : https://$Domain" -ForegroundColor Cyan
+  Write-Host "  Email   : $em" -ForegroundColor Cyan
+  Write-Host "  Password: $pw" -ForegroundColor Cyan
+  Write-Host ""
+  exit
+}
+
 $publicUrl = "https://$Domain"
 if ($Quick) { $publicUrl = "https://placeholder.trycloudflare.com" }
 
@@ -434,6 +482,7 @@ if ($firstRun) {
   Write-Host "  Admin login:" -ForegroundColor Cyan; $admin | ForEach-Object { Write-Host "    $_" -ForegroundColor Cyan }
   Write-Host "  Change the password after logging in (Account page)." -ForegroundColor Cyan
 }
+Write-Host "  Forgot the login? Run:  .\windows\run-tunnel.ps1 -ShowLogin" -ForegroundColor Cyan
 Write-Host "  Next: Admin -> AI Models & Keys -> Add provider key (Google Gemini) -> Recommended -> Save routing"
 Write-Host "  Keep this PC on and Docker Desktop running. Stop: .\windows\run-tunnel.ps1 -Stop"
 Start-Process $publicUrl
