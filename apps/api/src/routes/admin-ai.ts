@@ -22,6 +22,7 @@ import {
   transcribeWith,
   getRouting,
   listActiveModels,
+  effectiveBaseUrl,
   PROVIDER_DEFAULTS,
   GEMINI_MY_VOICES,
   EMPTY_ROUTING,
