@@ -43,6 +43,13 @@ export function invalidateAiCache() {
   cache = null;
 }
 
+/** Base URL actually used for a provider. Gemini goes through GEMINI_BASE_URL (relay) unless a custom URL is set. */
+export function effectiveBaseUrl(kind: AiProvider['kind'], baseUrl: string | null): string {
+  const relay = kind === 'GEMINI' ? env().GEMINI_BASE_URL?.trim() : '';
+  if (relay && (!baseUrl || /generativelanguage\.googleapis\.com/.test(baseUrl))) return relay.replace(/\/+$/, '');
+  return baseUrl || PROVIDER_DEFAULTS[kind].baseUrl || '';
+}
+
 function resolveProvider(p: AiProvider): ResolvedProvider {
   let apiKey: string | null = null;
   try {
@@ -54,7 +61,7 @@ function resolveProvider(p: AiProvider): ResolvedProvider {
     id: p.id,
     name: p.name,
     kind: p.kind,
-    baseUrl: p.baseUrl || PROVIDER_DEFAULTS[p.kind].baseUrl || '',
+    baseUrl: effectiveBaseUrl(p.kind, p.baseUrl),
     apiKey,
     region: p.region,
     config: (p.config as Record<string, unknown>) ?? {},

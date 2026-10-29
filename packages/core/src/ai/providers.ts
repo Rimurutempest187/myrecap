@@ -49,6 +49,13 @@ export interface ResolvedModel {
 
 const trimSlash = (s: string) => s.replace(/\/+$/, '');
 
+/** Google blocks the Gemini API in some countries (e.g. Myanmar). Turn that into an actionable message. */
+export const GEMINI_LOCATION_HINT =
+  'Gemini API is not available from this server\'s country (Google blocks e.g. Myanmar). Fix: run .\\windows\\run-tunnel.ps1 again - it creates a Cloudflare Worker relay in the US (Cloudflare token needs "Account | Workers Scripts | Edit"). On a VPS, use a server in a supported country.';
+export function isGeminiLocationError(raw: string) {
+  return /location is not supported|User location|FAILED_PRECONDITION.*location/i.test(raw);
+}
+
 function withTimeout(signal: AbortSignal | undefined, ms: number) {
   const t = AbortSignal.timeout(ms);
   return signal ? AbortSignal.any([signal, t]) : t;
@@ -76,6 +83,7 @@ async function openAiCompatChat(m: ResolvedModel, messages: ChatMessage[], opts:
   }
   const raw = await res.text();
   if (!res.ok) {
+    if (isGeminiLocationError(raw)) throw new LlmError(`${p.name}: ${GEMINI_LOCATION_HINT}`, res.status, false);
     const retryable = res.status === 429 || res.status >= 500;
     throw new LlmError(`${p.name} HTTP ${res.status}: ${raw.slice(0, 300)}`, res.status, retryable);
   }
@@ -170,7 +178,11 @@ export async function discoverModels(p: ResolvedProvider): Promise<Array<{ id: s
     headers['anthropic-version'] = '2023-06-01';
   } else if (p.apiKey) headers.Authorization = `Bearer ${p.apiKey}`;
   const res = await fetch(`${trimSlash(p.baseUrl)}/models`, { headers, signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const raw = await res.text();
+    if (isGeminiLocationError(raw)) throw new Error(GEMINI_LOCATION_HINT);
+    throw new Error(`HTTP ${res.status}: ${raw.slice(0, 200)}`);
+  }
   const data: any = await res.json();
   const ids: string[] = (data.data ?? data.models ?? []).map((x: any) => String(x.id ?? x.name ?? '').replace(/^models\//, '')).filter(Boolean);
   const NOT_CHAT = /embed|moderation|dall-e|image|davinci|babbage|realtime|search|banana|lyria|veo|imagen|robotics|computer-use|live|native-audio|aqa|antigravity|deep-research|omni|gemma-3n|learnlm/i;

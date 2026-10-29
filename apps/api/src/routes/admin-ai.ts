@@ -81,7 +81,7 @@ function publicProvider(p: Prisma.AiProviderGetPayload<{ include: { _count: { se
     kind: p.kind,
     label: PROVIDER_DEFAULTS[p.kind as Kind].label,
     baseUrl: p.baseUrl,
-    effectiveBaseUrl: p.baseUrl || PROVIDER_DEFAULTS[p.kind as Kind].baseUrl || null,
+    effectiveBaseUrl: effectiveBaseUrl(p.kind, p.baseUrl) || null,
     hasKey: !!p.apiKeyEnc,
     keyHint: p.keyHint,
     region: p.region,

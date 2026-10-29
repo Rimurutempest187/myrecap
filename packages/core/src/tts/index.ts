@@ -220,6 +220,8 @@ async function gemini(m: ResolvedModel, text: string, rate: number, pitch: numbe
         continue;
       }
       const raw = await res.text();
+      if (/location is not supported|User location/i.test(raw))
+        throw new TtsError(`${p.name}: Gemini API is not available from this server's country (e.g. Myanmar). Run .\\windows\\run-tunnel.ps1 again to create the Gemini relay.`, false);
       if (res.status === 404 || res.status === 400) {
         errors.push(`${model}: HTTP ${res.status} ${raw.slice(0, 160)}`);
         if (res.status === 400 && /API key|API_KEY/i.test(raw)) throw new TtsError(`${p.name}: invalid Gemini API key`, false);
