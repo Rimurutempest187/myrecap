@@ -43,11 +43,18 @@ export function invalidateAiCache() {
   cache = null;
 }
 
-/** Base URL actually used for a provider. Gemini goes through GEMINI_BASE_URL (relay) unless a custom URL is set. */
+const GOOGLE_API = /^https:\/\/generativelanguage\.googleapis\.com/;
+
+/**
+ * Base URL actually used for a provider. If GEMINI_BASE_URL is set (an API gateway such as Cloudflare AI Gateway),
+ * it replaces the Google host so both the OpenAI-compatible path (/v1beta/openai) and the native path (/v1beta)
+ * go through the gateway (logging, caching, rate limits).
+ */
 export function effectiveBaseUrl(kind: AiProvider['kind'], baseUrl: string | null): string {
-  const relay = kind === 'GEMINI' ? env().GEMINI_BASE_URL?.trim() : '';
-  if (relay && (!baseUrl || /generativelanguage\.googleapis\.com/.test(baseUrl))) return relay.replace(/\/+$/, '');
-  return baseUrl || PROVIDER_DEFAULTS[kind].baseUrl || '';
+  const url = baseUrl || PROVIDER_DEFAULTS[kind].baseUrl || '';
+  const relay = kind === 'GEMINI' ? (env().GEMINI_BASE_URL ?? '').trim().replace(/\/+$/, '') : '';
+  if (relay && GOOGLE_API.test(url)) return url.replace(GOOGLE_API, relay);
+  return url;
 }
 
 function resolveProvider(p: AiProvider): ResolvedProvider {

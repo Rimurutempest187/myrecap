@@ -221,7 +221,7 @@ async function gemini(m: ResolvedModel, text: string, rate: number, pitch: numbe
       }
       const raw = await res.text();
       if (/location is not supported|User location/i.test(raw))
-        throw new TtsError(`${p.name}: Gemini API is not available from this server's country (e.g. Myanmar). Run .\\windows\\run-tunnel.ps1 again to create the Gemini relay.`, false);
+        throw new TtsError(`${p.name}: Google does not offer the Gemini API in this server's country (e.g. Myanmar). Run RecapAI on a server in a supported country, or use another provider in Admin -> AI Models.`, false);
       if (res.status === 404 || res.status === 400) {
         errors.push(`${model}: HTTP ${res.status} ${raw.slice(0, 160)}`);
         if (res.status === 400 && /API key|API_KEY/i.test(raw)) throw new TtsError(`${p.name}: invalid Gemini API key`, false);

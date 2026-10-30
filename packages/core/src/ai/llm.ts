@@ -177,7 +177,7 @@ async function geminiTranscribe(
   });
   const raw = await res.text();
   if (!res.ok && /location is not supported|User location/i.test(raw))
-    throw new LlmError(`${m.provider.name}: Gemini API is not available from this server's country (e.g. Myanmar). Run .\\windows\\run-tunnel.ps1 again to create the Gemini relay.`, res.status, false);
+    throw new LlmError(`${m.provider.name}: Google does not offer the Gemini API in this server's country (e.g. Myanmar). Run RecapAI on a server in a supported country, or use another provider in Admin -> AI Models.`, res.status, false);
   if (!res.ok) throw new LlmError(`${m.provider.name} STT HTTP ${res.status}: ${raw.slice(0, 300)}`, res.status, res.status >= 500 || res.status === 429);
   const data = JSON.parse(raw);
   const text: string = (data?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? '').join('');

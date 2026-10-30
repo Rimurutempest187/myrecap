@@ -1,4 +1,4 @@
-# Local (Windows / Docker Desktop) edge: plain HTTP on :8080
+# Local (Windows / Docker Desktop) edge: plain HTTP on :8080 (Cloudflare Tunnel provides HTTPS)
 {
 	admin off
 	auto_https off
@@ -11,9 +11,32 @@
 	handle @api {
 		reverse_proxy api:4000 {
 			flush_interval -1
+			# While the API is (re)starting, wait for it instead of failing with 502 at once.
+			lb_try_duration 30s
+			lb_try_interval 1s
 		}
 	}
 	handle {
-		reverse_proxy web:3000
+		reverse_proxy web:3000 {
+			lb_try_duration 30s
+			lb_try_interval 1s
+		}
+	}
+
+	# Friendly page instead of a bare "502 Bad Gateway" while the app is still starting.
+	handle_errors {
+		@starting_page expression `{err.status_code} in [502, 503, 504] && !{path}.startsWith("/api/")`
+		handle @starting_page {
+			header Content-Type "text/html; charset=utf-8"
+			header Cache-Control "no-store"
+			header Retry-After "10"
+			respond `<!doctype html><html lang="my"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="10"><title>RecapAI is starting</title><style>body{font-family:system-ui,sans-serif;background:#0b1020;color:#e5e7eb;display:grid;place-items:center;min-height:100vh;margin:0}.c{text-align:center;max-width:28rem;padding:2rem}.s{width:42px;height:42px;border:4px solid #334155;border-top-color:#818cf8;border-radius:50%;animation:r 1s linear infinite;margin:0 auto 1.25rem}@keyframes r{to{transform:rotate(360deg)}}p{color:#94a3b8}</style></head><body><div class="c"><div class="s"></div><h1>RecapAI စတင်နေပါတယ်...</h1><p>Website is starting. This page refreshes automatically in 10 seconds.</p></div></body></html>` 503
+		}
+		@starting_api expression `{err.status_code} in [502, 503, 504]`
+		handle @starting_api {
+			header Content-Type "application/json"
+			header Retry-After "10"
+			respond `{"error":{"code":"STARTING","message":"The server is starting, please retry in a few seconds."}}` 503
+		}
 	}
 }

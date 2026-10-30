@@ -33,7 +33,7 @@ const schema = z.object({
 
   // AI (OpenAI-compatible)
   LLM_BASE_URL: z.string().default('https://api.openai.com/v1'),
-  // Gemini relay (e.g. a Cloudflare Worker in a supported region) for countries where Google blocks the API.
+  // Optional API gateway in front of Gemini (e.g. Cloudflare AI Gateway URL ending in /google-ai-studio).
   GEMINI_BASE_URL: z.string().optional(),
   LLM_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default('gpt-4o-mini'),

@@ -19,22 +19,22 @@ function Fail($m) { Write-Host "  [X] $m" -ForegroundColor Red; exit 1 }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Fail "Git is not installed: winget install --id Git.Git -e" }
 
-function Git([string[]]$GArgs) {
+function Invoke-Git([string[]]$GArgs) {
   $old = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $out = & git @GArgs 2>&1 | Out-String
+  $out = & git.exe @GArgs 2>&1 | Out-String
   $code = $LASTEXITCODE
   $ErrorActionPreference = $old
   return @{ Out = $out; Code = $code }
 }
 
-$remote = (Git @("remote", "get-url", "origin")).Out.Trim()
+$remote = (Invoke-Git @("remote", "get-url", "origin")).Out.Trim()
 $m = [regex]::Match($remote, "github\.com[:/]+([^/]+)/([^/.]+)")
 if (-not $m.Success) { Fail "origin is not a GitHub repository ($remote)" }
 $owner = $m.Groups[1].Value; $repo = $m.Groups[2].Value
 Ok "Repository: $owner/$repo"
 
 Step "Getting the latest code"
-$r = Git @("pull", "--rebase", "origin", "main")
+$r = Invoke-Git @("pull", "--rebase", "origin", "main")
 if ($r.Code -ne 0) { Write-Host $r.Out; Fail "git pull failed. Run:  git fetch origin; git reset --hard origin/main   then try again." }
 
 Step "Adding the GitHub Actions workflows"
@@ -43,22 +43,22 @@ Copy-Item "ci\docker-publish.yml" ".github\workflows\docker-publish.yml" -Force
 Copy-Item "ci\github-actions-ci.yml" ".github\workflows\ci.yml" -Force
 Ok ".github\workflows\docker-publish.yml + ci.yml"
 
-if (-not (Git @("config", "user.email")).Out.Trim()) {
+if (-not (Invoke-Git @("config", "user.email")).Out.Trim()) {
   $em = Read-Host "Your email for git commits"
-  Git @("config", "user.email", $em) | Out-Null
+  Invoke-Git @("config", "user.email", $em) | Out-Null
 }
-if (-not (Git @("config", "user.name")).Out.Trim()) { Git @("config", "user.name", $owner) | Out-Null }
+if (-not (Invoke-Git @("config", "user.name")).Out.Trim()) { Invoke-Git @("config", "user.name", $owner) | Out-Null }
 
-Git @("add", ".github/workflows") | Out-Null
-$st = (Git @("status", "--porcelain", ".github/workflows")).Out.Trim()
+Invoke-Git @("add", ".github/workflows") | Out-Null
+$st = (Invoke-Git @("status", "--porcelain", ".github/workflows")).Out.Trim()
 if ($st) {
-  $r = Git @("commit", "-m", "Enable GitHub Actions: CI + Docker image publishing")
+  $r = Invoke-Git @("commit", "-m", "Enable GitHub Actions: CI + Docker image publishing")
   if ($r.Code -ne 0) { Write-Host $r.Out; Fail "git commit failed" }
   Ok "Committed"
 } else { Ok "Workflows already committed" }
 
 Step "Pushing to GitHub (a GitHub login window may open - sign in as $owner)"
-$r = Git @("push", "origin", "HEAD:main")
+$r = Invoke-Git @("push", "origin", "HEAD:main")
 if ($r.Code -ne 0) {
   Write-Host $r.Out
   if ($r.Out -match "workflow") { Fail "Your GitHub login has no 'workflow' permission. Run:  git credential-manager github logout   and try again (sign in in the browser)." }

@@ -216,6 +216,19 @@ if ($Doctor) {
   Invoke-Native { docker images --format "{{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}" } | Select-String "recapai|myrecap" | ForEach-Object { Write-Host "  $_" }
   Step "Local health (http://127.0.0.1:8080/api/health)"
   try { $h = Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/health" -TimeoutSec 5; Write-Host "  $($h | ConvertTo-Json -Compress)" } catch { Write-Host "  NOT reachable: $($_.Exception.Message)" }
+  Step "Gemini API reachability from this PC"
+  try {
+    Invoke-RestMethod -Uri "https://generativelanguage.googleapis.com/v1beta/models?key=doctor-check" -TimeoutSec 15 | Out-Null
+    Write-Host "  reachable"
+  } catch {
+    $gm = $_.ErrorDetails.Message; if (-not $gm) { $gm = $_.Exception.Message }
+    if ($gm -match "location is not supported|User location") {
+      Write-Host "  BLOCKED: Google does not offer the Gemini API in this country (e.g. Myanmar)." -ForegroundColor Red
+      Write-Host "  Fix: run RecapAI on a server in a supported country (your VPS: .\windows\deploy-vps.ps1)," -ForegroundColor Red
+      Write-Host "       or use another AI provider in Admin -> AI Models." -ForegroundColor Red
+    } elseif ($gm -match "API key not valid|API_KEY_INVALID") { Write-Host "  reachable (Google answered; your real key is checked in Admin -> AI Models -> Test)" }
+    else { Write-Host "  NOT reachable: $gm" }
+  }
   Step "Public site (https://$Domain/api/health)"
   try { $h = Invoke-RestMethod -Uri "https://$Domain/api/health" -TimeoutSec 10; Write-Host "  $($h | ConvertTo-Json -Compress)" } catch { Write-Host "  NOT reachable: $($_.Exception.Message)" }
   foreach ($svc in @("cloudflared", "api", "worker", "web", "caddy", "postgres")) {

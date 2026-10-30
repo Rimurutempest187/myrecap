@@ -51,7 +51,9 @@ const trimSlash = (s: string) => s.replace(/\/+$/, '');
 
 /** Google blocks the Gemini API in some countries (e.g. Myanmar). Turn that into an actionable message. */
 export const GEMINI_LOCATION_HINT =
-  'Gemini API is not available from this server\'s country (Google blocks e.g. Myanmar). Fix: run .\\windows\\run-tunnel.ps1 again - it creates a Cloudflare Worker relay in the US (Cloudflare token needs "Account | Workers Scripts | Edit"). On a VPS, use a server in a supported country.';
+  "Google does not offer the Gemini API in this server's country (for example Myanmar), so every Gemini call is refused. " +
+  'Options: (1) run RecapAI on a server in a supported country (e.g. a VPS in Singapore/Europe: .\\windows\\deploy-vps.ps1), ' +
+  'or (2) use another provider that works from here (Admin -> AI Models: OpenAI or OpenRouter for scripts, Azure Speech for the Burmese voice).';
 export function isGeminiLocationError(raw: string) {
   return /location is not supported|User location|FAILED_PRECONDITION.*location/i.test(raw);
 }
